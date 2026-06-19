@@ -38,6 +38,7 @@ def test_job_list_and_generate_response_schema(
     capture_payload: dict[str, str],
 ) -> None:
     created = service.create_job(capture_payload)
+    DummyQ1Worker(service.repository).process_next()
     listed = service.list_jobs()
     generated = service.generate_now(str(created["job_id"]))
 
@@ -45,6 +46,8 @@ def test_job_list_and_generate_response_schema(
         {"job_id", "company", "title", "intake_status", "packet_status", "source_url"}
     )
     assert generated["job"]["packet_status"] == "queued"
+    assert generated["task"]["manual_override"] is True
+    assert listed["jobs"][0]["q2_eligibility"] == "eligible"
 
 
 def test_post_jobs_response_includes_phase2_intake_fields(

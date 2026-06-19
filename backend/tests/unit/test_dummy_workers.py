@@ -31,6 +31,7 @@ def test_dummy_q2_is_idempotent(
     artifact_root: Path,
     created_job: dict[str, object],
 ) -> None:
+    DummyQ1Worker(repository).process_next()
     service.generate_now(str(created_job["id"]))
     worker = DummyQ2Worker(repository, artifact_root)
 

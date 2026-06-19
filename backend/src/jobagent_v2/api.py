@@ -18,7 +18,11 @@ API_DOCUMENTATION = {
     "POST /api/jobs": "Create or return a duplicate raw job from extension capture payload.",
     "GET /api/jobs": "List active jobs. Use include_archived=true to include archived jobs.",
     "GET /api/jobs/{job_id}": "Return one job.",
-    "POST /api/jobs/{job_id}/generate": "Queue dummy Q2 work.",
+    "POST /api/jobs/{job_id}/generate": "Manually promote a scored job into Q2.",
+    "POST /api/jobs/{job_id}/star": "Star a job and set high manual priority.",
+    "POST /api/jobs/{job_id}/unstar": "Remove a job star and restore normal priority.",
+    "POST /api/jobs/{job_id}/priority": "Set manual priority to normal or high.",
+    "GET /api/jobs/{job_id}/q2-task": "Return the job's persistent Q2 task, if any.",
     "POST /api/jobs/{job_id}/retry": "Retry failed/manual-review dummy work.",
     "POST /api/jobs/{job_id}/archive": "Archive a job.",
     "GET /api/jobs/{job_id}/events": "Return persisted job event history.",
@@ -28,6 +32,8 @@ API_DOCUMENTATION = {
     "POST /api/jobs/{job_id}/rescore": "Rescore a completed intake job.",
     "POST /api/workers/q1/run-once": "Run one dummy Q1 job.",
     "POST /api/workers/q2/run-once": "Run one dummy Q2 job.",
+    "POST /api/workers/promotion/run-once": "Run one deterministic promotion scheduler cycle.",
+    "GET /api/queue/q2": "List persistent Q2 tasks and queue capacity diagnostics.",
 }
 
 
@@ -57,6 +63,9 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                     include_archived = query.get("include_archived", ["false"])[0] == "true"
                     self._send_json(service.list_jobs(include_archived=include_archived))
                     return
+                if path == "/api/queue/q2":
+                    self._send_json(service.list_q2_tasks())
+                    return
                 job_id, suffix = _match_job_route(path)
                 if job_id and suffix == "":
                     self._send_json(service.get_job(job_id))
@@ -72,6 +81,9 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                     return
                 if job_id and suffix == "/semantic-assessment":
                     self._send_json(service.get_semantic_assessment(job_id))
+                    return
+                if job_id and suffix == "/q2-task":
+                    self._send_json(service.get_q2_task(job_id))
                     return
                 self._send_json({"error": "not found"}, status=404)
             except JobNotFoundError as error:
@@ -92,9 +104,21 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                 if path == "/api/workers/q2/run-once":
                     self._send_json(service.run_q2_once())
                     return
+                if path == "/api/workers/promotion/run-once":
+                    self._send_json(service.run_promotion_once())
+                    return
                 job_id, suffix = _match_job_route(path)
                 if job_id and suffix == "/generate":
                     self._send_json(service.generate_now(job_id))
+                    return
+                if job_id and suffix == "/star":
+                    self._send_json(service.set_star(job_id, True))
+                    return
+                if job_id and suffix == "/unstar":
+                    self._send_json(service.set_star(job_id, False))
+                    return
+                if job_id and suffix == "/priority":
+                    self._send_json(service.set_priority(job_id, self._read_json()))
                     return
                 if job_id and suffix == "/retry":
                     self._send_json(service.retry(job_id))
@@ -135,6 +159,7 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(body)
 
+    Handler.service = service
     return Handler
 
 

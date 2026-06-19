@@ -162,6 +162,9 @@ Use validated semantic evidence while keeping final scoring deterministic.
 
 ## Phase 4: Promotion scheduler
 
+Status: implemented pending manual queue-policy review in
+`docs/build_reports/phase_4_promotion_scheduler.md`.
+
 Goal:
 
 ```text

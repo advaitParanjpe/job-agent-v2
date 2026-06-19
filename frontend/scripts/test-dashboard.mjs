@@ -17,8 +17,11 @@ for (const column of [
   "Role",
   "CV family",
   "Scoring mode",
+  "Star / priority",
+  "Q2 eligibility",
   "Intake status",
-  "Packet status",
+  "Q2 task status",
+  "Promotion reason",
   "Reason / warnings",
   "Source",
   "Actions",
@@ -54,6 +57,7 @@ assertEqual(dashboard.actionEndpoint("job-1", "generate"), "/api/jobs/job-1/gene
 assertEqual(dashboard.actionEndpoint("job-1", "retry"), "/api/jobs/job-1/retry");
 assertEqual(dashboard.actionEndpoint("job-1", "archive"), "/api/jobs/job-1/archive");
 assertEqual(dashboard.actionEndpoint("job-1", "rescore"), "/api/jobs/job-1/rescore");
+assertEqual(dashboard.actionEndpoint("job-1", "star"), "/api/jobs/job-1/star");
 
 const tbody = createElement("tbody");
 dashboard.renderJobs(
@@ -68,8 +72,12 @@ dashboard.renderJobs(
       role_family: "Software Engineering",
       selected_cv_family: "software",
       scoring_mode: "hybrid",
+      starred: true,
+      manual_priority: 1,
+      q2_eligibility: "in_q2",
       intake_status: "scored",
       packet_status: "ready",
+      promotion_reason: "score_threshold",
       reason: "Done",
       extraction_warnings: ["location_not_found"],
       source_url: "https://example.com/job",
@@ -91,8 +99,12 @@ assertEqual(tbody.children[0].children[2].textContent, "Austin, TX");
 assertEqual(tbody.children[0].children[3].textContent, "81");
 assertEqual(tbody.children[0].children[4].textContent, "Apply");
 assertEqual(tbody.children[0].children[5].textContent, "Software Engineering");
-    assertEqual(tbody.children[0].children[6].textContent, "software");
+assertEqual(tbody.children[0].children[6].textContent, "software");
 assertEqual(tbody.children[0].children[7].textContent, "hybrid");
+assertEqual(tbody.children[0].children[8].textContent, "Starred");
+assertEqual(tbody.children[0].children[9].textContent, "in_q2");
+assertEqual(tbody.children[0].children[11].textContent, "ready");
+assertEqual(tbody.children[0].children[12].textContent, "score_threshold");
 
 const queuedBody = createElement("tbody");
 dashboard.renderJobs(
@@ -107,15 +119,19 @@ dashboard.renderJobs(
       role_family: null,
       selected_cv_family: null,
       scoring_mode: null,
+      starred: false,
+      manual_priority: 0,
+      q2_eligibility: "not_scored",
       intake_status: "queued",
       packet_status: "not_requested",
+      promotion_reason: null,
       source_url: "https://example.com/queued",
     },
   ],
   queuedBody,
   async () => ({}),
 );
-assertEqual(queuedBody.children[0].children[8].textContent, "Queued - not processed");
+assertEqual(queuedBody.children[0].children[10].textContent, "Queued - not processed");
 
 console.log("frontend dashboard checks passed");
 

@@ -9,8 +9,11 @@ const DASHBOARD_COLUMNS = [
   "Role",
   "CV family",
   "Scoring mode",
+  "Star / priority",
+  "Q2 eligibility",
   "Intake status",
-  "Packet status",
+  "Q2 task status",
+  "Promotion reason",
   "Reason / warnings",
   "Source",
   "Actions",
@@ -59,6 +62,12 @@ function actionEndpoint(jobId, action) {
   if (action === "rescore") {
     return `/api/jobs/${jobId}/rescore`;
   }
+  if (action === "star") {
+    return `/api/jobs/${jobId}/star`;
+  }
+  if (action === "unstar") {
+    return `/api/jobs/${jobId}/unstar`;
+  }
   throw new Error(`unknown action: ${action}`);
 }
 
@@ -84,8 +93,11 @@ function renderJobs(jobs, tbody, onAction = apiPost) {
     appendCell(row, displayValue(job.role_family));
     appendCell(row, displayValue(job.selected_cv_family));
     appendCell(row, displayValue(job.scoring_mode));
+    appendCell(row, job.starred ? "Starred" : displayValue(job.manual_priority, "Normal"));
+    appendCell(row, displayValue(job.q2_eligibility));
     appendCell(row, intakeStatusLabel(job.intake_status));
     appendCell(row, displayValue(job.packet_status));
+    appendCell(row, displayValue(job.promotion_reason));
     appendCell(row, reasonAndWarnings(job));
     appendSourceCell(row, job.source_url);
     appendActionsCell(row, job, onAction);
@@ -113,6 +125,7 @@ function appendSourceCell(row, sourceUrl) {
 function appendActionsCell(row, job, onAction) {
   const cell = document.createElement("td");
   cell.appendChild(buildActionButton(job, "generate", "Generate now", onAction));
+  cell.appendChild(buildActionButton(job, job.starred ? "unstar" : "star", job.starred ? "Unstar" : "Star", onAction));
   if (job.intake_status === "scored") {
     cell.appendChild(buildActionButton(job, "rescore", "Rescore", onAction));
     const details = document.createElement("a");

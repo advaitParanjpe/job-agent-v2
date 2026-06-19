@@ -61,6 +61,7 @@ def test_generate_now_and_dummy_q2_reaches_ready(
     artifact_root: Path,
     created_job: dict[str, object],
 ) -> None:
+    DummyQ1Worker(repository).process_next()
     first = service.generate_now(str(created_job["id"]))["job"]
     second = service.generate_now(str(created_job["id"]))["job"]
     DummyQ2Worker(repository, artifact_root).process_next()
@@ -72,7 +73,7 @@ def test_generate_now_and_dummy_q2_reaches_ready(
     assert second["packet_status"] == "queued"
     assert job["packet_status"] == "ready"
     assert Path(str(job["placeholder_artifact_path"])).exists()
-    assert [event["event_type"] for event in events].count("packet_queued") == 1
+    assert [event["event_type"] for event in events].count("q2_task_promoted") == 1
 
 
 def test_duplicate_url_returns_existing_job(

@@ -18,7 +18,7 @@ from jobagent_v2.url_utils import normalize_url, source_site_from_url
 from jobagent_v2.util import utc_now_iso
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class JobNotFoundError(LookupError):
@@ -155,6 +155,26 @@ class Repository:
                     semantic_assessment_json TEXT,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS q2_tasks (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL,
+                    priority INTEGER NOT NULL,
+                    promotion_reason TEXT NOT NULL,
+                    score_at_promotion INTEGER,
+                    manual_override INTEGER NOT NULL DEFAULT 0,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT,
+                    failure_reason TEXT,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_q2_tasks_status_priority
+                ON q2_tasks(status, priority DESC, created_at ASC);
                 """
             )
             connection.execute(
@@ -202,6 +222,9 @@ class Repository:
             "llm_failure_reason": "TEXT",
             "llm_model": "TEXT",
             "llm_prompt_version": "TEXT",
+            "starred": "INTEGER NOT NULL DEFAULT 0",
+            "priority_updated_at": "TEXT",
+            "promotion_reason": "TEXT",
         }
         for name, ddl in columns.items():
             if name not in existing:
@@ -370,32 +393,285 @@ class Repository:
             updated = self._get_job_row(connection, job_id)
         return row_to_job(updated)
 
-    def queue_packet(self, job_id: str) -> dict[str, Any]:
+    def set_priority(self, job_id: str, *, starred: bool, priority: int) -> dict[str, Any]:
+        if priority not in {0, 1}:
+            raise ValueError("priority must be 0 (normal) or 1 (high)")
         with self.connect() as connection:
             row = self._get_job_row(connection, job_id)
-            if row["packet_status"] in {"queued", "generating", "ready"}:
-                raise DuplicateActivePacketError(job_id)
-            from_status = row["packet_status"]
-            validate_packet_transition(from_status, "queued")
             self._update_job(
                 connection,
                 job_id,
                 {
-                    "packet_status": "queued",
-                    "reason": "Queued for dummy Phase 1 packet processing.",
+                    "starred": int(starred),
+                    "manual_priority": priority,
+                    "priority_updated_at": utc_now_iso(),
                 },
             )
             self._insert_event(
                 connection,
                 job_id=job_id,
-                event_type="packet_queued",
-                from_status=from_status,
-                to_status="queued",
-                message="Generate now queued dummy Q2 work.",
-                metadata={},
+                event_type="manual_priority_updated",
+                from_status=None,
+                to_status=None,
+                message="Manual queue priority updated.",
+                metadata={"starred": starred, "manual_priority": priority},
             )
             updated = self._get_job_row(connection, job_id)
         return row_to_job(updated)
+
+    def get_q2_task(self, job_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM q2_tasks WHERE job_id = ?", (job_id,)
+            ).fetchone()
+        return row_to_q2_task(row) if row else None
+
+    def list_q2_tasks(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM q2_tasks ORDER BY priority DESC, created_at ASC"
+            ).fetchall()
+        return [row_to_q2_task(row) for row in rows]
+
+    def q2_active_count(self) -> int:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT count(*) AS count FROM q2_tasks "
+                "WHERE status IN ('queued', 'claimed', 'running')"
+            ).fetchone()
+        return int(row["count"])
+
+    def automatic_promotions_today(self, day_prefix: str) -> int:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT count(*) AS count FROM q2_tasks "
+                "WHERE manual_override = 0 AND created_at LIKE ?",
+                (f"{day_prefix}%",),
+            ).fetchone()
+        return int(row["count"])
+
+    def eligible_scored_jobs(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT j.* FROM jobs j
+                LEFT JOIN q2_tasks t ON t.job_id = j.id
+                WHERE j.intake_status = 'scored'
+                  AND j.overall_score IS NOT NULL
+                  AND j.archived_at IS NULL
+                  AND t.id IS NULL
+                ORDER BY j.manual_priority DESC, j.starred DESC,
+                         j.overall_score DESC, j.created_at ASC
+                """
+            ).fetchall()
+        return [row_to_job(row) for row in rows]
+
+    def create_q2_task(
+        self,
+        job_id: str,
+        *,
+        promotion_reason: str,
+        manual_override: bool,
+    ) -> tuple[dict[str, Any], bool]:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            job = self._get_job_row(connection, job_id)
+            existing = connection.execute(
+                "SELECT * FROM q2_tasks WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if existing is not None:
+                return row_to_q2_task(existing), False
+            if job["archived_at"] is not None:
+                raise ValueError("archived jobs cannot be promoted")
+            if job["intake_status"] != "scored" or job["overall_score"] is None:
+                raise ValueError("only successfully scored jobs can be promoted")
+            blockers = json.loads(job["hard_blockers_json"] or "[]")
+            if blockers:
+                raise ValueError(
+                    "job has unrecoverable hard blockers and cannot be promoted"
+                )
+            if job["packet_status"] not in {"not_requested", "failed", "manual_review"}:
+                raise DuplicateActivePacketError(job_id)
+            validate_packet_transition(job["packet_status"], "queued")
+            task_id = str(uuid4())
+            connection.execute(
+                """INSERT INTO q2_tasks (
+                id, job_id, status, priority, promotion_reason, score_at_promotion,
+                manual_override, attempt_count, created_at, updated_at)
+                VALUES (?, ?, 'queued', ?, ?, ?, ?, 0, ?, ?)""",
+                (
+                    task_id,
+                    job_id,
+                    int(job["manual_priority"]),
+                    promotion_reason,
+                    job["overall_score"],
+                    int(manual_override),
+                    now,
+                    now,
+                ),
+            )
+            self._update_job(
+                connection,
+                job_id,
+                {
+                    "packet_status": "queued",
+                    "promotion_reason": promotion_reason,
+                    "reason": "Queued for dummy Q2 processing.",
+                },
+            )
+            self._insert_event(
+                connection,
+                job_id=job_id,
+                event_type="q2_task_promoted",
+                from_status=job["packet_status"],
+                to_status="queued",
+                message="Scored job promoted to persistent Q2 queue.",
+                metadata={
+                    "task_id": task_id,
+                    "promotion_reason": promotion_reason,
+                    "manual_override": manual_override,
+                },
+            )
+            task = connection.execute(
+                "SELECT * FROM q2_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+        if task is None:
+            raise RuntimeError("Q2 task creation did not persist")
+        return row_to_q2_task(task), True
+
+    def claim_next_q2_task(
+        self, *, owner: str, concurrency: int, lease_expires_at: str
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            active = connection.execute(
+                "SELECT count(*) AS count FROM q2_tasks "
+                "WHERE status IN ('claimed', 'running')"
+            ).fetchone()
+            if int(active["count"]) >= concurrency:
+                return None
+            row = connection.execute(
+                "SELECT * FROM q2_tasks WHERE status = 'queued' "
+                "ORDER BY priority DESC, created_at ASC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return None
+            connection.execute(
+                """UPDATE q2_tasks SET status = 'claimed', lease_owner = ?,
+                lease_expires_at = ?, attempt_count = attempt_count + 1, updated_at = ?
+                WHERE id = ? AND status = 'queued'""",
+                (owner, lease_expires_at, utc_now_iso(), row["id"]),
+            )
+            claimed = connection.execute(
+                "SELECT * FROM q2_tasks WHERE id = ?", (row["id"],)
+            ).fetchone()
+            self._insert_event(
+                connection,
+                job_id=row["job_id"],
+                event_type="q2_task_claimed",
+                from_status="queued",
+                to_status="claimed",
+                message="Dummy Q2 worker claimed persistent task.",
+                metadata={"task_id": row["id"], "owner": owner},
+            )
+        return row_to_q2_task(claimed) if claimed else None
+
+    def start_q2_task(self, task_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM q2_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"unknown Q2 task: {task_id}")
+            if row["status"] != "claimed":
+                raise ValueError("only claimed Q2 tasks can start")
+            connection.execute(
+                "UPDATE q2_tasks SET status = 'running', started_at = ?, "
+                "updated_at = ? WHERE id = ?",
+                (utc_now_iso(), utc_now_iso(), task_id),
+            )
+            job = self._get_job_row(connection, row["job_id"])
+            validate_packet_transition(job["packet_status"], "generating")
+            self._update_job(connection, row["job_id"], {"packet_status": "generating"})
+            self._insert_event(
+                connection,
+                job_id=row["job_id"],
+                event_type="q2_task_running",
+                from_status="claimed",
+                to_status="running",
+                message="Dummy Q2 task started placeholder generation.",
+                metadata={"task_id": task_id},
+            )
+            updated = connection.execute(
+                "SELECT * FROM q2_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+        return row_to_q2_task(updated)
+
+    def complete_q2_task(self, task_id: str, artifact_path: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM q2_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if row is None or row["status"] != "running":
+                raise ValueError("only running Q2 tasks can complete")
+            now = utc_now_iso()
+            connection.execute(
+                """UPDATE q2_tasks SET status = 'ready', completed_at = ?, lease_owner = NULL,
+                lease_expires_at = NULL, updated_at = ? WHERE id = ?""",
+                (now, now, task_id),
+            )
+            job = self._get_job_row(connection, row["job_id"])
+            validate_packet_transition(job["packet_status"], "ready")
+            self._update_job(
+                connection,
+                row["job_id"],
+                {"packet_status": "ready", "placeholder_artifact_path": artifact_path},
+            )
+            self._insert_event(
+                connection,
+                job_id=row["job_id"],
+                event_type="q2_task_ready",
+                from_status="running",
+                to_status="ready",
+                message="Dummy Q2 completed placeholder artifact.",
+                metadata={
+                    "task_id": task_id,
+                    "artifact_path": artifact_path,
+                    "dummy": True,
+                },
+            )
+            updated = connection.execute(
+                "SELECT * FROM q2_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+        return row_to_q2_task(updated)
+
+    def recover_stale_q2_tasks(self, *, now: str, retry_limit: int) -> int:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM q2_tasks WHERE status IN ('claimed', 'running') "
+                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ?",
+                (now,),
+            ).fetchall()
+            for row in rows:
+                retry = int(row["attempt_count"]) < retry_limit
+                status = "queued" if retry else "failed"
+                connection.execute(
+                    """UPDATE q2_tasks SET status = ?, lease_owner = NULL, lease_expires_at = NULL,
+                    failure_reason = ?, updated_at = ? WHERE id = ?""",
+                    (status, "worker lease expired", now, row["id"]),
+                )
+                job = self._get_job_row(connection, row["job_id"])
+                packet_status = "queued" if retry else "failed"
+                self._update_job(connection, row["job_id"], {"packet_status": packet_status})
+                self._insert_event(
+                    connection,
+                    job_id=row["job_id"],
+                    event_type="q2_task_stale_recovered",
+                    from_status=row["status"],
+                    to_status=status,
+                    message="Expired Q2 lease was recovered.",
+                    metadata={"task_id": row["id"], "requeued": retry},
+                )
+        return len(rows)
 
     def archive_job(self, job_id: str) -> dict[str, Any]:
         now = utc_now_iso()
@@ -650,19 +926,6 @@ class Repository:
                     return row_to_job(row)
         return None
 
-    def next_job_with_packet_status(self, status: str) -> dict[str, Any] | None:
-        with self.connect() as connection:
-            row = connection.execute(
-                """
-                SELECT * FROM jobs
-                WHERE packet_status = ? AND archived_at IS NULL
-                ORDER BY created_at ASC
-                LIMIT 1
-                """,
-                (status,),
-            ).fetchone()
-        return row_to_job(row) if row is not None else None
-
     def _get_job_row(self, connection: sqlite3.Connection, job_id: str) -> sqlite3.Row:
         row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if row is None:
@@ -785,9 +1048,33 @@ def row_to_job(row: sqlite3.Row) -> dict[str, Any]:
         "intake_status": row["intake_status"],
         "packet_status": row["packet_status"],
         "manual_priority": row["manual_priority"],
+        "starred": bool(row["starred"]),
+        "priority_updated_at": row["priority_updated_at"],
+        "promotion_reason": row["promotion_reason"],
         "placeholder_artifact_path": row["placeholder_artifact_path"],
         "archived_at": row["archived_at"],
         "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def row_to_q2_task(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "task_id": row["id"],
+        "job_id": row["job_id"],
+        "status": row["status"],
+        "priority": row["priority"],
+        "promotion_reason": row["promotion_reason"],
+        "score_at_promotion": row["score_at_promotion"],
+        "manual_override": bool(row["manual_override"]),
+        "attempt_count": row["attempt_count"],
+        "lease_owner": row["lease_owner"],
+        "lease_expires_at": row["lease_expires_at"],
+        "failure_reason": row["failure_reason"],
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
         "updated_at": row["updated_at"],
     }
 

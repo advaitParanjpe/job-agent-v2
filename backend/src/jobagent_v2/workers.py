@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from jobagent_v2.intake import intake_result_to_updates, run_intake
 from jobagent_v2.hybrid_scoring import score_hybrid_job
+from jobagent_v2.promotion import PromotionConfig
 from jobagent_v2.scoring import ScoringConfigurationError
 from jobagent_v2.storage import Repository
 from jobagent_v2.util import utc_now_iso
@@ -125,34 +127,31 @@ class DummyQ1Worker:
 
 
 class DummyQ2Worker:
-    def __init__(self, repository: Repository, artifact_root: Path | str) -> None:
+    def __init__(
+        self,
+        repository: Repository,
+        artifact_root: Path | str,
+        config: PromotionConfig | None = None,
+    ) -> None:
         self.repository = repository
         self.artifact_root = Path(artifact_root)
+        self.config = config or PromotionConfig.from_env()
         self.artifact_root.mkdir(parents=True, exist_ok=True)
 
     def process_next(self) -> dict[str, object] | None:
-        job = self.repository.next_job_with_packet_status("queued")
-        if job is None:
+        expiry = datetime.now(timezone.utc) + timedelta(seconds=self.config.lease_seconds)
+        task = self.repository.claim_next_q2_task(
+            owner="dummy-q2-worker",
+            concurrency=self.config.q2_worker_concurrency,
+            lease_expires_at=expiry.isoformat(timespec="seconds"),
+        )
+        if task is None:
             return None
-        job_id = str(job["id"])
-        self.repository.transition_packet(
-            job_id,
-            "generating",
-            event_type="q2_generating",
-            message="Dummy Q2 started placeholder artifact generation.",
-        )
+        task = self.repository.start_q2_task(str(task["id"]))
+        job = self.repository.get_job(str(task["job_id"]))
         artifact_path = self._write_placeholder_artifact(job)
-        return self.repository.transition_packet(
-            job_id,
-            "ready",
-            event_type="q2_ready",
-            message="Dummy Q2 completed placeholder artifact.",
-            updates={
-                "placeholder_artifact_path": str(artifact_path),
-                "reason": "Phase 1 dummy packet artifact is ready.",
-            },
-            metadata={"artifact_path": str(artifact_path), "dummy": True},
-        )
+        self.repository.complete_q2_task(str(task["id"]), str(artifact_path))
+        return self.repository.get_job(str(task["job_id"]))
 
     def _write_placeholder_artifact(self, job: dict[str, object]) -> Path:
         job_id = str(job["id"])

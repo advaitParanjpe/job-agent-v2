@@ -177,16 +177,36 @@ It transitions `scored -> scoring -> scored`; a scoring failure is persisted as
 
 ## `POST /api/jobs/{job_id}/generate`
 
-Queues dummy Q2 work for the job. Duplicate active or completed packet work returns the
-existing job state.
+Immediately promotes a scored, non-archived, non-blocked job into persistent Q2.
+It bypasses the score threshold and automatic daily budget, but does not bypass hard
+blockers. A repeated call returns the existing task without creating a duplicate.
 
 Response:
 
 ```json
 {
-  "job": {}
+  "job": {},
+  "task": {"status": "queued", "manual_override": true},
+  "created": true
 }
 ```
+
+## Promotion and Q2 endpoints
+
+`POST /api/workers/promotion/run-once` applies the deterministic promotion policy.
+It fills available Q2 capacity with eligible scored jobs in manual-priority, star,
+score, then creation-time order. Automatic promotions require score >= 82 by default
+and count toward `JOBAGENT_AUTO_PACKET_BUDGET`; manual Generate now does not.
+
+`GET /api/queue/q2` returns `tasks`, `active_tasks`, `capacity`, and
+`worker_concurrency`. A Q2 task is durable and has `queued`, `claimed`, `running`,
+`ready`, or `failed` state.
+
+`GET /api/jobs/{job_id}/q2-task` returns the job's task or `null`.
+
+`POST /api/jobs/{job_id}/star` and `POST /api/jobs/{job_id}/unstar` set persistent
+manual priority. `POST /api/jobs/{job_id}/priority` accepts
+`{"priority":"normal"}` or `{"priority":"high"}`.
 
 ## `POST /api/jobs/{job_id}/retry`
 
@@ -257,7 +277,7 @@ Response:
 
 ## `POST /api/workers/q2/run-once`
 
-Runs one dummy Q2 item through:
+Claims one persistent Q2 task, then runs dummy artifact output through:
 
 ```text
 queued -> generating -> ready

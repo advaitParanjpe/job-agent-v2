@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from jobagent_v2.promotion import PromotionConfig, PromotionScheduler, q2_eligibility
 from jobagent_v2.schemas import parse_capture_payload
 from jobagent_v2.storage import DuplicateActivePacketError, Repository, summarize_job
 from jobagent_v2.workers import DummyQ1Worker, DummyQ2Worker
@@ -21,10 +22,16 @@ class JobService:
         return summarize_job(job, duplicate=duplicate)
 
     def list_jobs(self, *, include_archived: bool = False) -> dict[str, Any]:
-        return {"jobs": self.repository.list_jobs(include_archived=include_archived)}
+        config = PromotionConfig.from_env()
+        jobs = self.repository.list_jobs(include_archived=include_archived)
+        for job in jobs:
+            job["q2_eligibility"] = q2_eligibility(job, config)
+        return {"jobs": jobs}
 
     def get_job(self, job_id: str) -> dict[str, Any]:
-        return {"job": self.repository.get_job(job_id)}
+        job = self.repository.get_job(job_id)
+        job["q2_eligibility"] = q2_eligibility(job, PromotionConfig.from_env())
+        return {"job": job}
 
     def get_events(self, job_id: str) -> dict[str, Any]:
         return {"events": self.repository.list_events(job_id)}
@@ -43,10 +50,47 @@ class JobService:
 
     def generate_now(self, job_id: str) -> dict[str, Any]:
         try:
-            job = self.repository.queue_packet(job_id)
+            task, created = self.repository.create_q2_task(
+                job_id,
+                promotion_reason="manual_generate",
+                manual_override=True,
+            )
         except DuplicateActivePacketError:
-            job = self.repository.get_job(job_id)
-        return {"job": job}
+            task = self.repository.get_q2_task(job_id)
+            created = False
+        return {"job": self.repository.get_job(job_id), "task": task, "created": created}
+
+    def set_star(self, job_id: str, starred: bool) -> dict[str, Any]:
+        priority = 1 if starred else 0
+        return {"job": self.repository.set_priority(job_id, starred=starred, priority=priority)}
+
+    def set_priority(self, job_id: str, payload: Any) -> dict[str, Any]:
+        value = payload.get("priority") if isinstance(payload, dict) else None
+        if value not in {"normal", "high"}:
+            raise ValueError("priority must be 'normal' or 'high'")
+        job = self.repository.get_job(job_id)
+        return {
+            "job": self.repository.set_priority(
+                job_id,
+                starred=bool(job["starred"]),
+                priority=1 if value == "high" else 0,
+            )
+        }
+
+    def get_q2_task(self, job_id: str) -> dict[str, Any]:
+        return {"task": self.repository.get_q2_task(job_id)}
+
+    def list_q2_tasks(self) -> dict[str, Any]:
+        config = PromotionConfig.from_env()
+        return {
+            "tasks": self.repository.list_q2_tasks(),
+            "active_tasks": self.repository.q2_active_count(),
+            "capacity": config.q2_capacity,
+            "worker_concurrency": config.q2_worker_concurrency,
+        }
+
+    def run_promotion_once(self) -> dict[str, Any]:
+        return PromotionScheduler(self.repository).run_once()
 
     def archive(self, job_id: str) -> dict[str, Any]:
         return {"job": self.repository.archive_job(job_id)}
