@@ -1,0 +1,12 @@
+{
+  "name": "jobagent-v2-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-placeholder.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
+

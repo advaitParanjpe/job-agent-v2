@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "JobAgent V2",
+  "version": "0.0.0",
+  "description": "Placeholder Chrome extension structure for JobAgent V2.",
+  "action": {
+    "default_title": "JobAgent V2",
+    "default_popup": "popup.html"
+  },
+  "permissions": ["activeTab", "scripting"]
+}
+
