@@ -14,6 +14,10 @@ Once the skeleton is reliable, add intelligence stage by stage.
 
 The goal is an easy build, not a perfect first version.
 
+Before implementing each phase, inspect the V1 reference map for related
+components. Use V1 to recover lessons, tests, invariants, and edge cases. Do not
+treat the map as permission to copy code.
+
 ---
 
 ## Phase 0: Planning docs
@@ -42,6 +46,9 @@ manual actions
 ---
 
 ## Phase 1: Queue skeleton
+
+Status: implemented for review in
+`docs/build_reports/phase_1_queue_skeleton.md`.
 
 Goal:
 

@@ -1,0 +1,22 @@
+body {
+  color: #1f2933;
+  font-family: Arial, sans-serif;
+  margin: 24px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  border-bottom: 1px solid #d9e2ec;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+button {
+  margin-right: 6px;
+}

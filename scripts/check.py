@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Phase 0B bootstrap checks without requiring network installs."""
+"""Run JobAgent V2 repository checks without requiring network installs."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def check_types() -> None:
             "from jobagent_v2 import create_app_metadata; "
             "m=create_app_metadata(); "
             "assert isinstance(m['name'], str); "
-            "assert m['implements_features'] is False",
+            "assert m['implements_features'] is True",
         ],
         env=env,
     )
@@ -81,9 +81,10 @@ def main() -> None:
     check_extension_manifest()
     run([sys.executable, "-m", "pytest"])
     run(["npm", "run", "build"], cwd=ROOT / "frontend")
+    run(["node", "scripts/test-dashboard.mjs"], cwd=ROOT / "frontend")
     run(["node", "scripts/validate.mjs"], cwd=ROOT / "extension")
+    run(["node", "scripts/test-popup.mjs"], cwd=ROOT / "extension")
 
 
 if __name__ == "__main__":
     main()
-

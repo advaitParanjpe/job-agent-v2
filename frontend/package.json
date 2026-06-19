@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/build-placeholder.mjs"
+    "build": "node scripts/build-placeholder.mjs",
+    "test": "node scripts/test-dashboard.mjs"
   },
   "dependencies": {},
   "devDependencies": {}
 }
-

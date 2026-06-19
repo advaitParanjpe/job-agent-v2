@@ -51,7 +51,7 @@ V1 audit files read:
 - `job-agent-v2/extension/scripts/validate.mjs`
 - `job-agent-v2/scripts/check.py`
 - `job-agent-v2/docs/build_reports/.gitkeep`
-- `job-agent-v2/jobagent_v2_plan/reuse_manifest.md`
+- `job-agent-v2/jobagent_v2_plan/v1_reference_map.md`
 - `job-agent-v2/docs/build_reports/phase_0b_repository_bootstrap.md`
 
 ## Files modified
@@ -132,8 +132,8 @@ rm -f job-agent-v2/.DS_Store
 
 ## Reuse candidates identified
 
-The full reuse manifest is in
-`job-agent-v2/jobagent_v2_plan/reuse_manifest.md`.
+The full V1 reference map is in
+`job-agent-v2/jobagent_v2_plan/v1_reference_map.md`.
 
 High-confidence candidates from the audit:
 
@@ -221,7 +221,7 @@ job-agent-v2/jobagent_v2_plan/architecture.md
 job-agent-v2/jobagent_v2_plan/build_roadmap.md
 job-agent-v2/jobagent_v2_plan/data_model.md
 job-agent-v2/jobagent_v2_plan/pipeline.md
-job-agent-v2/jobagent_v2_plan/reuse_manifest.md
+job-agent-v2/jobagent_v2_plan/v1_reference_map.md
 job-agent-v2/jobagent_v2_plan/status_model.md
 job-agent-v2/pyproject.toml
 job-agent-v2/scripts
