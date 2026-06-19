@@ -34,7 +34,20 @@ def capture_payload() -> dict[str, str]:
     return {
         "url": "https://Example.com/jobs/123?b=2&a=1#section",
         "page_title": "Example RTL Engineer",
-        "visible_text": "Example visible job text for Phase 1 capture.",
+        "visible_text": (
+            "Example RTL Engineer\n"
+            "Location: Austin, TX\n"
+            "About the role\n"
+            "You will design and verify RTL blocks for high-performance silicon products.\n"
+            "Responsibilities\n"
+            "You will implement SystemVerilog modules, review microarchitecture specs, "
+            "debug simulation failures, and collaborate with verification engineers.\n"
+            "Qualifications\n"
+            "Requirements include experience with digital logic, computer architecture, "
+            "Python scripting, version control, and clear technical communication.\n"
+            "Preferred qualifications include exposure to synthesis, timing, FPGA "
+            "prototyping, and hardware bring-up workflows."
+        ),
         "source_site": "example.com",
         "captured_at": "2026-06-19T12:00:00Z",
     }
@@ -52,4 +65,3 @@ def fresh_repository(db_path: Path) -> Iterator[type[Repository]]:
         return Repository(db_path)
 
     yield factory
-

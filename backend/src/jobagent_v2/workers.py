@@ -1,12 +1,12 @@
-"""Deterministic dummy workers for the Phase 1 queue skeleton."""
+"""Deterministic workers for the local queue skeleton."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+from jobagent_v2.intake import intake_result_to_updates, run_intake
 from jobagent_v2.storage import Repository
-from jobagent_v2.url_utils import source_site_from_url
 from jobagent_v2.util import utc_now_iso
 
 
@@ -22,29 +22,74 @@ class DummyQ1Worker:
         self.repository.transition_intake(
             job_id,
             "extracting",
-            event_type="q1_extracting",
-            message="Dummy Q1 started placeholder extraction.",
+            event_type="intake_extracting",
+            message="Intake started deterministic JD extraction.",
         )
+        result = run_intake(
+            page_title=str(job["page_title"]),
+            visible_text=str(job["raw_visible_text"]),
+            source_site=str(job["source_site"]) if job["source_site"] else None,
+            source_url=str(job["source_url"]),
+            evidence=job["capture_evidence"] if isinstance(job["capture_evidence"], dict) else {},
+        )
+        updates = intake_result_to_updates(result)
         self.repository.transition_intake(
             job_id,
-            "scoring",
-            event_type="q1_scoring",
-            message="Dummy Q1 started placeholder scoring.",
+            "structuring",
+            event_type="intake_structuring",
+            message="Intake extracted JD text and diagnostics.",
+            updates=updates,
+            metadata={
+                "quality_band": result.quality.band,
+                "warnings": result.warnings,
+            },
         )
-        title = str(job["page_title"] or "Untitled job")
-        site = str(job["source_site"] or source_site_from_url(str(job["source_url"])))
-        return self.repository.transition_intake(
+        if result.quality.band == "failed":
+            return self.repository.transition_intake(
+                job_id,
+                "failed",
+                event_type="intake_failed",
+                message=result.failure_reason or "Intake failed.",
+                metadata={"warnings": result.warnings},
+                updates={
+                    "reason": result.failure_reason or "Intake failed.",
+                    "failure_reason": result.failure_reason,
+                },
+            )
+        if result.quality.band == "manual_review":
+            return self.repository.transition_intake(
+                job_id,
+                "manual_review",
+                event_type="intake_manual_review",
+                message=result.manual_review_reason or "Intake requires manual review.",
+                metadata={"warnings": result.warnings},
+                updates={
+                    "reason": result.manual_review_reason or "Intake requires manual review.",
+                    "manual_review_reason": result.manual_review_reason,
+                },
+            )
+        final_job = self.repository.transition_intake(
             job_id,
             "scored",
-            event_type="q1_scored",
-            message="Dummy Q1 completed with deterministic placeholder output.",
+            event_type="intake_complete",
+            message="Deterministic intake completed.",
             updates={
-                "company": title,
-                "title": title,
-                "reason": f"Phase 1 dummy processing completed for {site}.",
+                "reason": f"Intake complete with {result.quality.band} JD quality.",
             },
-            metadata={"dummy": True},
+            metadata={"quality_band": result.quality.band, "warnings": result.warnings},
         )
+        duplicate = self.repository.find_probable_duplicate(
+            job_id=job_id,
+            company=result.company.value,
+            title=result.title.value,
+            jd_text_fingerprint=result.duplicate_fingerprint,
+        )
+        if duplicate is not None:
+            final_job = self.repository.set_duplicate_warning(
+                job_id,
+                f"Probable duplicate of job {duplicate['id']}.",
+            )
+        return final_job
 
 
 class DummyQ2Worker:
@@ -89,4 +134,3 @@ class DummyQ2Worker:
         }
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return path
-

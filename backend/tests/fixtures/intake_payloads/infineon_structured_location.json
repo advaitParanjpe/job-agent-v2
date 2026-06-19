@@ -1,0 +1,36 @@
+{
+  "page_title": "Graduate - Senior Engineer Digital IC Design | Infineon",
+  "source_site": "jobs.infineon.com",
+  "source_url": "https://jobs.infineon.com/careers/job/563808961449922",
+  "visible_text": "Graduate - Senior Engineer Digital IC Design\nResponsibilities\nDesign digital circuits and collaborate with product development teams.\nQualifications\nKnowledge of Verilog, digital design, and verification debugging.",
+  "evidence": {
+    "detected_site": "generic",
+    "json_ld_job_postings": [
+      {
+        "@type": "JobPosting",
+        "title": "Graduate - Senior Engineer Digital IC Design",
+        "hiringOrganization": {"name": "Infineon"},
+        "jobLocation": [
+          {
+            "@type": "Place",
+            "address": {
+              "@type": "PostalAddress",
+              "addressLocality": "San Jose",
+              "addressRegion": "CA,US",
+              "addressCountry": {"@type": "Country", "name": "US"}
+            }
+          },
+          {
+            "@type": "Place",
+            "address": {
+              "@type": "PostalAddress",
+              "addressRegion": "CA,US",
+              "addressCountry": {"@type": "Country", "name": "US"}
+            }
+          }
+        ],
+        "description": "Responsibilities: Design and implement digital circuits, develop architectures, write RTL, execute verification plans, and collaborate across product development. Qualifications: A degree in electrical engineering or computer engineering, knowledge of Verilog and digital design, verification debugging experience, and strong communication skills."
+      }
+    ]
+  }
+}

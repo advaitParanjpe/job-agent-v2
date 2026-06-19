@@ -3,12 +3,12 @@ const API_BASE_URL = "http://127.0.0.1:8765";
 const DASHBOARD_COLUMNS = [
   "Company",
   "Title",
-  "Score",
-  "Rec",
+  "Location",
+  "JD quality",
   "Role",
   "Intake status",
   "Packet status",
-  "Reason",
+  "Reason / warnings",
   "Source",
   "Actions",
 ];
@@ -34,6 +34,13 @@ function displayValue(value, fallback = "-") {
     return fallback;
   }
   return String(value);
+}
+
+function intakeStatusLabel(status) {
+  if (status === "queued") {
+    return "Queued - not processed";
+  }
+  return displayValue(status);
 }
 
 function actionEndpoint(jobId, action) {
@@ -65,12 +72,12 @@ function renderJobs(jobs, tbody, onAction = apiPost) {
     const row = document.createElement("tr");
     appendCell(row, displayValue(job.company));
     appendCell(row, displayValue(job.title));
-    appendCell(row, displayValue(job.overall_score));
-    appendCell(row, displayValue(job.recommendation));
+    appendCell(row, displayValue(job.location));
+    appendCell(row, displayValue(job.jd_quality_band));
     appendCell(row, displayValue(job.role_family));
-    appendCell(row, displayValue(job.intake_status));
+    appendCell(row, intakeStatusLabel(job.intake_status));
     appendCell(row, displayValue(job.packet_status));
-    appendCell(row, displayValue(job.reason));
+    appendCell(row, reasonAndWarnings(job));
     appendSourceCell(row, job.source_url);
     appendActionsCell(row, job, onAction);
     tbody.appendChild(row);
@@ -97,7 +104,12 @@ function appendSourceCell(row, sourceUrl) {
 function appendActionsCell(row, job, onAction) {
   const cell = document.createElement("td");
   cell.appendChild(buildActionButton(job, "generate", "Generate now", onAction));
-  if (job.intake_status === "failed" || job.packet_status === "failed") {
+  if (
+    job.intake_status === "failed" ||
+    job.intake_status === "manual_review" ||
+    job.packet_status === "failed" ||
+    job.packet_status === "manual_review"
+  ) {
     cell.appendChild(buildActionButton(job, "retry", "Retry", onAction));
   }
   cell.appendChild(buildActionButton(job, "archive", "Archive", onAction));
@@ -112,6 +124,26 @@ function appendActionsCell(row, job, onAction) {
   row.appendChild(cell);
 }
 
+function reasonAndWarnings(job) {
+  const parts = [];
+  if (job.reason) {
+    parts.push(job.reason);
+  }
+  if (job.manual_review_reason) {
+    parts.push(job.manual_review_reason);
+  }
+  if (job.failure_reason) {
+    parts.push(job.failure_reason);
+  }
+  if (job.duplicate_warning) {
+    parts.push(job.duplicate_warning);
+  }
+  if (Array.isArray(job.extraction_warnings) && job.extraction_warnings.length) {
+    parts.push(`Warnings: ${job.extraction_warnings.join(", ")}`);
+  }
+  return parts.join(" | ") || "-";
+}
+
 async function refreshDashboard() {
   const tbody = document.querySelector("#jobs-body");
   if (!tbody) {
@@ -124,7 +156,19 @@ async function refreshDashboard() {
   });
 }
 
+function bindIntakeQueueAction() {
+  const button = document.querySelector("#process-intake-queue");
+  if (!button) {
+    return;
+  }
+  button.addEventListener("click", async () => {
+    await apiPost("/api/workers/q1/run-once");
+    await refreshDashboard();
+  });
+}
+
 if (typeof document !== "undefined") {
+  bindIntakeQueueAction();
   refreshDashboard().catch((error) => {
     const tbody = document.querySelector("#jobs-body");
     if (tbody) {
@@ -136,6 +180,9 @@ if (typeof document !== "undefined") {
 globalThis.JobAgentV2Dashboard = {
   DASHBOARD_COLUMNS,
   actionEndpoint,
+  bindIntakeQueueAction,
   displayValue,
+  intakeStatusLabel,
+  reasonAndWarnings,
   renderJobs,
 };

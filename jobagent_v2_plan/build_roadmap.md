@@ -82,6 +82,9 @@ No real scoring or packet generation yet
 
 ## Phase 2: Real intake
 
+Status: implemented for review in
+`docs/build_reports/phase_2_real_intake.md`.
+
 Goal:
 
 ```text

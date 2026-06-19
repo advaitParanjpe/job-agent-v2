@@ -1,4 +1,4 @@
-"""SQLite persistence for Phase 1 jobs and events."""
+"""SQLite persistence for jobs and events."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from jobagent_v2.url_utils import normalize_url, source_site_from_url
 from jobagent_v2.util import utc_now_iso
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class JobNotFoundError(LookupError):
@@ -57,8 +57,27 @@ class Repository:
                     page_title TEXT NOT NULL,
                     raw_visible_text TEXT NOT NULL,
                     source_site TEXT,
+                    capture_evidence_json TEXT,
+                    detected_site TEXT,
+                    extraction_candidates_json TEXT,
+                    duplicate_key TEXT,
+                    duplicate_warning TEXT,
+                    jd_text TEXT,
+                    jd_quality_score INTEGER,
+                    jd_quality_band TEXT,
+                    jd_quality_json TEXT,
+                    structured_jd_json TEXT,
                     company TEXT,
                     title TEXT,
+                    location TEXT,
+                    extraction_method TEXT,
+                    extraction_warnings_json TEXT,
+                    failure_reason TEXT,
+                    manual_review_reason TEXT,
+                    field_provenance_json TEXT,
+                    raw_text_length INTEGER,
+                    clean_text_length INTEGER,
+                    jd_text_fingerprint TEXT,
                     role_family TEXT,
                     overall_score INTEGER,
                     recommendation TEXT,
@@ -88,6 +107,35 @@ class Repository:
                 "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
                 ("schema_version", str(SCHEMA_VERSION)),
             )
+            self._ensure_columns(connection)
+
+    def _ensure_columns(self, connection: sqlite3.Connection) -> None:
+        rows = connection.execute("PRAGMA table_info(jobs)").fetchall()
+        existing = {row["name"] for row in rows}
+        columns = {
+            "duplicate_key": "TEXT",
+            "capture_evidence_json": "TEXT",
+            "detected_site": "TEXT",
+            "extraction_candidates_json": "TEXT",
+            "duplicate_warning": "TEXT",
+            "jd_text": "TEXT",
+            "jd_quality_score": "INTEGER",
+            "jd_quality_band": "TEXT",
+            "jd_quality_json": "TEXT",
+            "structured_jd_json": "TEXT",
+            "location": "TEXT",
+            "extraction_method": "TEXT",
+            "extraction_warnings_json": "TEXT",
+            "failure_reason": "TEXT",
+            "manual_review_reason": "TEXT",
+            "field_provenance_json": "TEXT",
+            "raw_text_length": "INTEGER",
+            "clean_text_length": "INTEGER",
+            "jd_text_fingerprint": "TEXT",
+        }
+        for name, ddl in columns.items():
+            if name not in existing:
+                connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {ddl}")
 
     def create_or_get_job(self, payload: CapturePayload) -> tuple[dict[str, Any], bool]:
         normalized_url = normalize_url(payload.url)
@@ -110,17 +158,17 @@ class Repository:
                 return row_to_job(existing), True
 
             job_id = str(uuid4())
-            title = payload.page_title or "Untitled job"
             connection.execute(
                 """
                 INSERT INTO jobs (
                     id, source_url, normalized_url, page_title, raw_visible_text,
-                    source_site, company, title, role_family, overall_score,
+                    source_site, capture_evidence_json, detected_site, duplicate_key,
+                    company, title, role_family, overall_score,
                     recommendation, reason, intake_status, packet_status,
                     manual_priority, placeholder_artifact_path, archived_at,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -129,12 +177,15 @@ class Repository:
                     payload.page_title,
                     payload.visible_text,
                     site,
-                    title,
-                    title,
+                    json.dumps(payload.evidence, sort_keys=True),
+                    str(payload.evidence.get("detected_site") or site or ""),
+                    normalized_url,
                     None,
                     None,
                     None,
-                    "Queued for dummy Phase 1 intake processing.",
+                    None,
+                    None,
+                    "Queued for deterministic intake processing.",
                     "queued",
                     "not_requested",
                     0,
@@ -302,7 +353,13 @@ class Repository:
                 self._update_job(
                     connection,
                     job_id,
-                    {"intake_status": "queued", "reason": "Retry queued for dummy Q1."},
+                    {
+                        "intake_status": "queued",
+                        "reason": "Retry queued for intake processing.",
+                        "failure_reason": None,
+                        "manual_review_reason": None,
+                        "extraction_warnings_json": "[]",
+                    },
                 )
                 self._insert_event(
                     connection,
@@ -346,6 +403,57 @@ class Repository:
                 (status,),
             ).fetchone()
         return row_to_job(row) if row is not None else None
+
+    def set_duplicate_warning(self, job_id: str, warning: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            self._get_job_row(connection, job_id)
+            self._update_job(connection, job_id, {"duplicate_warning": warning})
+            self._insert_event(
+                connection,
+                job_id=job_id,
+                event_type="probable_duplicate_detected",
+                from_status=None,
+                to_status=None,
+                message=warning,
+                metadata={},
+            )
+            row = self._get_job_row(connection, job_id)
+        return row_to_job(row)
+
+    def find_probable_duplicate(
+        self,
+        *,
+        job_id: str,
+        company: str | None,
+        title: str | None,
+        jd_text_fingerprint: str | None,
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            if jd_text_fingerprint:
+                row = connection.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE id != ? AND jd_text_fingerprint = ?
+                    LIMIT 1
+                    """,
+                    (job_id, jd_text_fingerprint),
+                ).fetchone()
+                if row is not None:
+                    return row_to_job(row)
+            if company and title:
+                row = connection.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE id != ?
+                    AND lower(company) = lower(?)
+                    AND lower(title) = lower(?)
+                    LIMIT 1
+                    """,
+                    (job_id, company, title),
+                ).fetchone()
+                if row is not None:
+                    return row_to_job(row)
+        return None
 
     def next_job_with_packet_status(self, status: str) -> dict[str, Any] | None:
         with self.connect() as connection:
@@ -420,8 +528,37 @@ def row_to_job(row: sqlite3.Row) -> dict[str, Any]:
         "page_title": row["page_title"],
         "raw_visible_text": row["raw_visible_text"],
         "source_site": row["source_site"],
+        "capture_evidence": json.loads(row["capture_evidence_json"])
+        if row["capture_evidence_json"]
+        else {},
+        "detected_site": row["detected_site"],
+        "extraction_candidates": json.loads(row["extraction_candidates_json"])
+        if row["extraction_candidates_json"]
+        else None,
+        "duplicate_key": row["duplicate_key"],
+        "duplicate_warning": row["duplicate_warning"],
+        "jd_text": row["jd_text"],
+        "jd_quality_score": row["jd_quality_score"],
+        "jd_quality_band": row["jd_quality_band"],
+        "jd_quality": json.loads(row["jd_quality_json"]) if row["jd_quality_json"] else None,
+        "structured_jd": json.loads(row["structured_jd_json"])
+        if row["structured_jd_json"]
+        else None,
         "company": row["company"],
         "title": row["title"],
+        "location": row["location"],
+        "extraction_method": row["extraction_method"],
+        "extraction_warnings": json.loads(row["extraction_warnings_json"])
+        if row["extraction_warnings_json"]
+        else [],
+        "failure_reason": row["failure_reason"],
+        "manual_review_reason": row["manual_review_reason"],
+        "field_provenance": json.loads(row["field_provenance_json"])
+        if row["field_provenance_json"]
+        else None,
+        "raw_text_length": row["raw_text_length"],
+        "clean_text_length": row["clean_text_length"],
+        "jd_text_fingerprint": row["jd_text_fingerprint"],
         "role_family": row["role_family"],
         "overall_score": row["overall_score"],
         "recommendation": row["recommendation"],

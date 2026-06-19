@@ -4,6 +4,7 @@ import pytest
 
 from jobagent_v2.schemas import ValidationError
 from jobagent_v2.service import JobService
+from jobagent_v2.workers import DummyQ1Worker
 
 
 def test_extension_payload_schema_and_post_jobs_success_response(
@@ -46,7 +47,66 @@ def test_job_list_and_generate_response_schema(
     assert generated["job"]["packet_status"] == "queued"
 
 
+def test_post_jobs_response_includes_phase2_intake_fields(
+    service: JobService,
+    capture_payload: dict[str, str],
+) -> None:
+    response = service.create_job(capture_payload)
+    job = response["job"]
+
+    assert set(job).issuperset(
+        {
+            "normalized_url",
+            "duplicate_key",
+            "duplicate_warning",
+            "jd_text",
+            "jd_quality_score",
+            "jd_quality_band",
+            "jd_quality",
+            "structured_jd",
+            "location",
+            "extraction_method",
+            "extraction_warnings",
+            "failure_reason",
+            "manual_review_reason",
+            "field_provenance",
+            "raw_text_length",
+            "clean_text_length",
+            "jd_text_fingerprint",
+        }
+    )
+
+
+def test_list_and_detail_use_canonical_completed_intake_field_names(
+    service: JobService,
+    repository,
+) -> None:
+    created = service.create_job(
+        {
+            "url": "https://acme.example/jobs/completed-intake",
+            "page_title": "Senior RTL Engineer - Acme Silicon",
+            "visible_text": (
+                "Senior RTL Engineer\nAustin, TX\nResponsibilities\n"
+                "Design SystemVerilog RTL and collaborate with verification engineers.\n"
+                "Qualifications\nBS in Electrical Engineering and SystemVerilog experience."
+            ),
+            "source_site": "acme.example",
+            "captured_at": "2026-06-19T12:00:00Z",
+        }
+    )
+    DummyQ1Worker(repository).process_next()
+
+    listed = service.list_jobs()["jobs"][0]
+    detailed = service.get_job(str(created["job_id"]))["job"]
+
+    for job in (listed, detailed):
+        assert job["company"] == "Acme Silicon"
+        assert job["title"] == "Senior RTL Engineer"
+        assert job["location"] == "Austin, TX"
+        assert job["jd_quality_band"] == "usable_with_warnings"
+        assert job["role_family"] is None
+
+
 def test_invalid_request_rejection(service: JobService) -> None:
     with pytest.raises(ValidationError):
         service.create_job({"url": "not enough"})
-

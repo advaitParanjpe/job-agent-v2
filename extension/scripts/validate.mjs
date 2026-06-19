@@ -21,9 +21,31 @@ for (const permission of ["activeTab", "scripting"]) {
   }
 }
 
-for (const field of ["url", "page_title", "visible_text", "source_site", "captured_at"]) {
+for (const field of [
+  "url",
+  "page_title",
+  "visible_text",
+  "source_site",
+  "captured_at",
+  "evidence",
+]) {
   if (!popup.includes(field)) {
     throw new Error(`popup payload is missing ${field}`);
+  }
+}
+
+for (const evidenceField of [
+  "json_ld_job_postings",
+  "meta",
+  "headings",
+  "likely_title_elements",
+  "likely_company_elements",
+  "likely_location_elements",
+  "likely_description_elements",
+  "diagnostics",
+]) {
+  if (!popup.includes(evidenceField)) {
+    throw new Error(`popup evidence is missing ${evidenceField}`);
   }
 }
 

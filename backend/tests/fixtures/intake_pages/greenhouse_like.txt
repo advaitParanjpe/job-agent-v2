@@ -1,0 +1,15 @@
+Greenhouse Demo Corp
+Embedded Firmware Engineer
+San Jose, CA
+Apply Now
+About the role
+You will build firmware for embedded controllers used in semiconductor test systems.
+Responsibilities
+You will write C and Python, debug hardware interfaces, read schematics, and
+collaborate with electrical engineers to bring up prototypes.
+Qualifications
+Requirements include embedded C, microcontrollers, communication buses, debugging
+with oscilloscopes or logic analyzers, and strong teamwork.
+Benefits
+Equal opportunity employer.
+

@@ -1,0 +1,29 @@
+{
+  "page_title": "ASIC Design Engineer - New College Grad 2026",
+  "source_site": "nvidia.wd5.myworkdayjobs.com",
+  "source_url": "https://nvidia.wd5.myworkdayjobs.com/careers/job/JR2017581",
+  "visible_text": "ASIC Design Engineer - New College Grad 2026\nlocations US, CA, Santa Clara\nResponsibilities\nDesign and verify RTL for complex memory subsystem designs.\nQualifications\nExperience with Verilog, digital design, and computer architecture.",
+  "evidence": {
+    "detected_site": "workday",
+    "json_ld_job_postings": [
+      {
+        "@type": "JobPosting",
+        "title": "ASIC Design Engineer - New College Grad 2026",
+        "hiringOrganization": {"name": "2100 NVIDIA USA"},
+        "jobLocation": {
+          "@type": "Place",
+          "address": {
+            "@type": "PostalAddress",
+            "addressLocality": "Santa Clara",
+            "addressRegion": "CA",
+            "addressCountry": "US"
+          }
+        },
+        "description": "Responsibilities: Design and verify RTL for complex memory subsystem designs, collaborate with architecture and verification teams, and improve design quality. Qualifications: Experience with Verilog, digital design, computer architecture, synthesis, timing analysis, and clear technical communication."
+      }
+    ],
+    "likely_title_elements": ["ASIC Design Engineer - New College Grad 2026"],
+    "headings": ["ASIC Design Engineer - New College Grad 2026"],
+    "meta": {"og:title": "ASIC Design Engineer - New College Grad 2026"}
+  }
+}

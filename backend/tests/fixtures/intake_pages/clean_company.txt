@@ -1,0 +1,13 @@
+Acme Silicon Senior RTL Engineer
+Location: Austin, TX
+About the role
+You will design, implement, and verify RTL for high-performance accelerators.
+Responsibilities
+You will work with architecture teams, write SystemVerilog, debug simulations,
+review waveforms, and support synthesis handoff for reusable IP blocks.
+Qualifications
+Requirements include digital design experience, computer architecture knowledge,
+Python scripting, Git, and clear documentation habits.
+Preferred qualifications include FPGA prototyping, timing closure exposure, and
+experience with verification-driven hardware development.
+

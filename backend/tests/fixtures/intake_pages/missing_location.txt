@@ -1,0 +1,10 @@
+Acme Systems - Backend Developer
+About the role
+You will build APIs and internal services for a local job workflow product.
+Responsibilities
+You will design endpoints, maintain SQLite-backed persistence, write tests, and
+debug failures in local developer environments.
+Qualifications
+Requirements include Python, HTTP APIs, SQL, testing discipline, and practical
+debugging experience.
+

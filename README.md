@@ -2,9 +2,9 @@
 
 Local-only job application queue and packet-generation system.
 
-This repository is currently in Phase 1. It contains a persistent local queue
-skeleton with dummy workers. It intentionally does not implement real JD
-extraction, scoring, CV tailoring, PDF generation, or LLM calls.
+This repository is currently in Phase 2. It contains a persistent local queue
+skeleton with deterministic intake extraction and diagnostics. It intentionally
+does not implement scoring, CV tailoring, PDF generation, or LLM calls.
 
 ## Layout
 

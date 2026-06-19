@@ -20,7 +20,7 @@ def test_dummy_q1_is_deterministic(
     assert processed["id"] == created_job["id"]
     assert processed["intake_status"] == "scored"
     assert processed["overall_score"] is None
-    assert "Phase 1 dummy processing" in str(processed["reason"])
+    assert "Intake complete" in str(processed["reason"])
     assert second is None
 
 
@@ -41,4 +41,3 @@ def test_dummy_q2_is_idempotent(
     assert processed["placeholder_artifact_path"] is not None
     assert Path(str(processed["placeholder_artifact_path"])).exists()
     assert second is None
-

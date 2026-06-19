@@ -33,7 +33,12 @@ def test_event_history_is_persisted(
     events = service.get_events(str(created_job["id"]))["events"]
 
     event_types = [event["event_type"] for event in events]
-    assert event_types == ["job_created", "q1_extracting", "q1_scoring", "q1_scored"]
+    assert event_types == [
+        "job_created",
+        "intake_extracting",
+        "intake_structuring",
+        "intake_complete",
+    ]
 
 
 def test_dummy_q1_reaches_scored(
@@ -46,6 +51,7 @@ def test_dummy_q1_reaches_scored(
     job = service.get_job(str(created_job["id"]))["job"]
     assert job["intake_status"] == "scored"
     assert job["packet_status"] == "not_requested"
+    assert job["jd_quality_band"] in {"good", "usable_with_warnings"}
 
 
 def test_generate_now_and_dummy_q2_reaches_ready(
@@ -128,4 +134,3 @@ def test_retry_resets_failed_intake_state(
     retried = service.retry(str(created_job["id"]))["job"]
 
     assert retried["intake_status"] == "queued"
-

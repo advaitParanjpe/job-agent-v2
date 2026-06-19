@@ -1,0 +1,11 @@
+Principal Verification Engineer
+Location: Boston, MA
+About the role
+You will own verification planning for reusable digital IP blocks.
+Responsibilities
+You will build testbenches, write assertions, debug failures, and coordinate
+coverage closure with designers.
+Qualifications
+Requirements include SystemVerilog, UVM, scripting, simulation debugging, and
+experience reviewing specifications.
+

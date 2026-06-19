@@ -58,6 +58,12 @@ VALID_PACKET_STATUSES: Final[set[str]] = {
 
 INTAKE_TRANSITIONS: Final[set[tuple[str, str]]] = {
     ("queued", "extracting"),
+    ("extracting", "structuring"),
+    ("extracting", "manual_review"),
+    ("extracting", "failed"),
+    ("structuring", "scored"),
+    ("structuring", "manual_review"),
+    ("structuring", "failed"),
     ("extracting", "scoring"),
     ("scoring", "scored"),
     ("failed", "queued"),
@@ -103,4 +109,3 @@ def retry_available(intake_status: str, packet_status: str) -> bool:
         "failed",
         "manual_review",
     }
-

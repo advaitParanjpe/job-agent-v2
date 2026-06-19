@@ -39,6 +39,7 @@ const payload = extension.buildCapturePayload(
   { url: "https://www.Example.com/jobs/1", title: "Example Job" },
   " A\n\n job\t page ",
   "2026-06-19T12:00:00Z",
+  { detected_site: "generic", json_ld_job_postings: [] },
 );
 
 assertEqual(payload.url, "https://www.Example.com/jobs/1");
@@ -46,6 +47,7 @@ assertEqual(payload.page_title, "Example Job");
 assertEqual(payload.visible_text, "A job page");
 assertEqual(payload.source_site, "example.com");
 assertEqual(payload.captured_at, "2026-06-19T12:00:00Z");
+assertEqual(payload.evidence.detected_site, "generic");
 assertEqual(extension.outcomeLabel({ duplicate: false }), "Added to queue");
 assertEqual(extension.outcomeLabel({ duplicate: true }), "Already queued");
 

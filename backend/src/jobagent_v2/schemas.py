@@ -17,6 +17,7 @@ class CapturePayload:
     visible_text: str
     source_site: str | None
     captured_at: str
+    evidence: dict[str, Any]
 
 
 def require_object(payload: Any) -> dict[str, Any]:
@@ -40,6 +41,7 @@ def parse_capture_payload(payload: Any) -> CapturePayload:
         visible_text=visible_text,
         source_site=source_site.strip() or None if isinstance(source_site, str) else None,
         captured_at=captured_at,
+        evidence=_optional_object(data, "evidence"),
     )
 
 
@@ -49,3 +51,11 @@ def _required_string(data: dict[str, Any], key: str) -> str:
         raise ValidationError(f"{key} is required")
     return value.strip()
 
+
+def _optional_object(data: dict[str, Any], key: str) -> dict[str, Any]:
+    value = data.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValidationError(f"{key} must be an object")
+    return value

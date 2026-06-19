@@ -1,0 +1,16 @@
+LinkedIn
+Jobs
+People
+Messages
+Example Devices
+Hardware Validation Engineer
+Location: Santa Clara, CA
+About the role
+You will validate new hardware platforms in a lab environment.
+Responsibilities
+You will develop validation plans, run experiments, automate test collection, and
+summarize failures for design teams.
+Qualifications
+Requirements include lab debugging, Python, hardware fundamentals, and clear
+communication with design and manufacturing partners.
+

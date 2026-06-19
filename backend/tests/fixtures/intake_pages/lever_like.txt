@@ -1,0 +1,13 @@
+Apply for this job
+Nova Compute
+Software Engineer, Infrastructure
+Location: London, UK
+The role
+You will build backend services that process job data and operate internal APIs.
+Responsibilities
+You will design reliable services, write tests, review code, and improve
+observability for local developer workflows.
+Requirements
+Experience with Python, HTTP APIs, SQL databases, and operational debugging is
+required for this role.
+
