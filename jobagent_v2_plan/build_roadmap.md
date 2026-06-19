@@ -116,6 +116,9 @@ Bad pages fail visibly
 
 ## Phase 3: Real Queue 1 scoring
 
+Status: implemented for human evaluation review in
+`docs/build_reports/phase_3_real_scoring.md`.
+
 Goal:
 
 ```text
@@ -145,6 +148,17 @@ No packets generated yet unless manually requested
 ```
 
 ---
+
+## Phase 3B: Hybrid scoring
+
+Status: implemented for human semantic-quality review in
+`docs/build_reports/phase_3b_hybrid_scoring.md`.
+
+Goal:
+
+```text
+Use validated semantic evidence while keeping final scoring deterministic.
+```
 
 ## Phase 4: Promotion scheduler
 

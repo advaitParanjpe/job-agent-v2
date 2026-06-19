@@ -4,8 +4,11 @@ const DASHBOARD_COLUMNS = [
   "Company",
   "Title",
   "Location",
-  "JD quality",
+  "Score",
+  "Recommendation",
   "Role",
+  "CV family",
+  "Scoring mode",
   "Intake status",
   "Packet status",
   "Reason / warnings",
@@ -53,6 +56,9 @@ function actionEndpoint(jobId, action) {
   if (action === "archive") {
     return `/api/jobs/${jobId}/archive`;
   }
+  if (action === "rescore") {
+    return `/api/jobs/${jobId}/rescore`;
+  }
   throw new Error(`unknown action: ${action}`);
 }
 
@@ -73,8 +79,11 @@ function renderJobs(jobs, tbody, onAction = apiPost) {
     appendCell(row, displayValue(job.company));
     appendCell(row, displayValue(job.title));
     appendCell(row, displayValue(job.location));
-    appendCell(row, displayValue(job.jd_quality_band));
+    appendCell(row, displayValue(job.overall_score));
+    appendCell(row, displayValue(job.recommendation));
     appendCell(row, displayValue(job.role_family));
+    appendCell(row, displayValue(job.selected_cv_family));
+    appendCell(row, displayValue(job.scoring_mode));
     appendCell(row, intakeStatusLabel(job.intake_status));
     appendCell(row, displayValue(job.packet_status));
     appendCell(row, reasonAndWarnings(job));
@@ -104,6 +113,15 @@ function appendSourceCell(row, sourceUrl) {
 function appendActionsCell(row, job, onAction) {
   const cell = document.createElement("td");
   cell.appendChild(buildActionButton(job, "generate", "Generate now", onAction));
+  if (job.intake_status === "scored") {
+    cell.appendChild(buildActionButton(job, "rescore", "Rescore", onAction));
+    const details = document.createElement("a");
+    details.href = `${API_BASE_URL}/api/jobs/${job.job_id}/score`;
+    details.target = "_blank";
+    details.rel = "noreferrer";
+    details.textContent = "Score details";
+    cell.appendChild(details);
+  }
   if (
     job.intake_status === "failed" ||
     job.intake_status === "manual_review" ||

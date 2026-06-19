@@ -62,10 +62,13 @@ INTAKE_TRANSITIONS: Final[set[tuple[str, str]]] = {
     ("extracting", "manual_review"),
     ("extracting", "failed"),
     ("structuring", "scored"),
+    ("structuring", "scoring"),
     ("structuring", "manual_review"),
     ("structuring", "failed"),
     ("extracting", "scoring"),
     ("scoring", "scored"),
+    ("scoring", "failed"),
+    ("scored", "scoring"),
     ("failed", "queued"),
     ("manual_review", "queued"),
 }

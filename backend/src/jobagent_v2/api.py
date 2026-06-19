@@ -22,6 +22,10 @@ API_DOCUMENTATION = {
     "POST /api/jobs/{job_id}/retry": "Retry failed/manual-review dummy work.",
     "POST /api/jobs/{job_id}/archive": "Archive a job.",
     "GET /api/jobs/{job_id}/events": "Return persisted job event history.",
+    "GET /api/jobs/{job_id}/score": "Return persisted Phase 3 scoring diagnostics.",
+    "GET /api/jobs/{job_id}/block-scores": "Return persisted block-level scores.",
+    "GET /api/jobs/{job_id}/semantic-assessment": "Return persisted hybrid semantic diagnostics.",
+    "POST /api/jobs/{job_id}/rescore": "Rescore a completed intake job.",
     "POST /api/workers/q1/run-once": "Run one dummy Q1 job.",
     "POST /api/workers/q2/run-once": "Run one dummy Q2 job.",
 }
@@ -60,6 +64,15 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                 if job_id and suffix == "/events":
                     self._send_json(service.get_events(job_id))
                     return
+                if job_id and suffix == "/score":
+                    self._send_json(service.get_score(job_id))
+                    return
+                if job_id and suffix == "/block-scores":
+                    self._send_json(service.get_block_scores(job_id))
+                    return
+                if job_id and suffix == "/semantic-assessment":
+                    self._send_json(service.get_semantic_assessment(job_id))
+                    return
                 self._send_json({"error": "not found"}, status=404)
             except JobNotFoundError as error:
                 self._send_json({"error": str(error)}, status=404)
@@ -88,6 +101,9 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                     return
                 if job_id and suffix == "/archive":
                     self._send_json(service.archive(job_id))
+                    return
+                if job_id and suffix == "/rescore":
+                    self._send_json(service.rescore(job_id))
                     return
                 self._send_json({"error": "not found"}, status=404)
             except (ValidationError, ValueError, InvalidTransitionError) as error:
@@ -142,4 +158,3 @@ def _match_job_route(path: str) -> tuple[str | None, str]:
         job_id, suffix = rest.split("/", 1)
         return job_id, f"/{suffix}"
     return rest, ""
-

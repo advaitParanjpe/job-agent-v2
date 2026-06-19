@@ -29,6 +29,18 @@ class JobService:
     def get_events(self, job_id: str) -> dict[str, Any]:
         return {"events": self.repository.list_events(job_id)}
 
+    def get_score(self, job_id: str) -> dict[str, Any]:
+        return {"score": self.repository.get_score(job_id)}
+
+    def get_block_scores(self, job_id: str) -> dict[str, Any]:
+        return {"block_scores": self.repository.list_block_scores(job_id)}
+
+    def get_semantic_assessment(self, job_id: str) -> dict[str, Any]:
+        return {"semantic_assessment": self.repository.get_semantic_assessment(job_id)}
+
+    def rescore(self, job_id: str) -> dict[str, Any]:
+        return {"job": DummyQ1Worker(self.repository).rescore(job_id)}
+
     def generate_now(self, job_id: str) -> dict[str, Any]:
         try:
             job = self.repository.queue_packet(job_id)
@@ -49,4 +61,3 @@ class JobService:
     def run_q2_once(self) -> dict[str, Any]:
         job = DummyQ2Worker(self.repository, self.artifact_root).process_next()
         return {"processed": job is not None, "job": job}
-

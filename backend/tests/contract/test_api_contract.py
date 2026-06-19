@@ -104,9 +104,37 @@ def test_list_and_detail_use_canonical_completed_intake_field_names(
         assert job["title"] == "Senior RTL Engineer"
         assert job["location"] == "Austin, TX"
         assert job["jd_quality_band"] == "usable_with_warnings"
-        assert job["role_family"] is None
+        assert job["role_family"] == "RTL / ASIC Design"
+        assert job["selected_cv_family"] == "hardware_rtl"
 
 
 def test_invalid_request_rejection(service: JobService) -> None:
     with pytest.raises(ValidationError):
         service.create_job({"url": "not enough"})
+
+
+def test_phase3_score_and_block_score_response_schemas(service: JobService, repository) -> None:
+    created = service.create_job(
+        {
+            "url": "https://example.com/contracts/rtl", "page_title": "RTL Engineer - Acme",
+            "visible_text": """Responsibilities
+Design SystemVerilog RTL for ASIC products and review verification results.
+Qualifications
+Verilog, SystemVerilog, RTL, ASIC, and Python experience are required.
+""",
+            "source_site": "example.com", "captured_at": "2026-06-19T12:00:00Z",
+        }
+    )
+    DummyQ1Worker(repository).process_next()
+    job_id = str(created["job_id"])
+    score = service.get_score(job_id)["score"]
+    blocks = service.get_block_scores(job_id)["block_scores"]
+
+    assert score is not None
+    assert set(score).issuperset(
+        {"structured_jd", "family_selection", "section_scores", "score_breakdown"}
+    )
+    assert blocks and {
+        "aggregate_score", "matched_requirements", "risk_of_overclaim"
+    }.issubset(blocks[0])
+    assert service.rescore(job_id)["job"]["intake_status"] == "scored"

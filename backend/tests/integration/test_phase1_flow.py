@@ -37,7 +37,8 @@ def test_event_history_is_persisted(
         "job_created",
         "intake_extracting",
         "intake_structuring",
-        "intake_complete",
+        "scoring_started",
+        "job_scored",
     ]
 
 

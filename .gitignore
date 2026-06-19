@@ -12,4 +12,6 @@ backend/htmlcov/
 frontend/dist/
 extension/dist/
 data/
-
+.env
+.env.*
+!.env.example

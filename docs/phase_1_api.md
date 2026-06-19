@@ -1,10 +1,34 @@
-# Phase 2 API
+# Phase 3 API
 
 Base URL for local development:
 
 ```text
 http://127.0.0.1:8765
 ```
+
+## Live Semantic Provider Configuration
+
+The optional live provider uses the official OpenAI Responses SDK with strict
+JSON-schema output. Export configuration locally or copy `.env.example` values
+into your shell; no environment file is loaded automatically.
+
+```bash
+export JOBAGENT_LLM_ENABLED=true
+export JOBAGENT_LLM_API_KEY='replace-with-local-key'
+export JOBAGENT_LLM_MODEL=gpt-4o-mini
+export JOBAGENT_LLM_TIMEOUT_SECONDS=10
+export JOBAGENT_LLM_RETRY_COUNT=1
+```
+
+Run one explicit live semantic request only when intended:
+
+```bash
+PYTHONPATH=backend/src python3 scripts/live_llm_smoke.py --live
+```
+
+This command is not part of the default test suite. If a provider request,
+credential, timeout, or schema failure occurs, normal Queue 1 scoring persists
+deterministic fallback output instead.
 
 ## `POST /api/jobs`
 
@@ -128,6 +152,29 @@ clean_text_length
 jd_text_fingerprint
 ```
 
+## `GET /api/jobs/{job_id}/score`
+
+Returns persisted structured JD, CV-family selection, section scores, score
+breakdown, strengths, gaps, and hard blockers.
+
+## `GET /api/jobs/{job_id}/block-scores`
+
+Returns every selected-truth-bank block score with its dimensions, aggregate,
+matched requirements, unmatched requirements, risk, and scoring version.
+
+## `GET /api/jobs/{job_id}/semantic-assessment`
+
+Returns hybrid scoring diagnostics without credentials: scoring mode, LLM call
+status/failure reason, model and prompt versions, deterministic and semantic
+family evidence, family decision, and validated semantic assessment when one is
+available.
+
+## `POST /api/jobs/{job_id}/rescore`
+
+Replaces the persisted hybrid or deterministic scoring result for an already scored job.
+It transitions `scored -> scoring -> scored`; a scoring failure is persisted as
+`failed` and remains retryable.
+
 ## `POST /api/jobs/{job_id}/generate`
 
 Queues dummy Q2 work for the job. Duplicate active or completed packet work returns the
@@ -181,10 +228,10 @@ Response:
 
 Runs one deterministic intake item through a compatible status flow.
 
-Successful or usable intake:
+Successful intake and scoring:
 
 ```text
-queued -> extracting -> structuring -> scored
+queued -> extracting -> structuring -> scoring -> scored
 ```
 
 Weak intake:

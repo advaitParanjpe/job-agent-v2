@@ -51,7 +51,7 @@ def test_real_intake_worker_good_fixture_reaches_intake_complete(
     assert processed["company"] == "Acme Silicon"
     assert processed["title"] == "Senior RTL Engineer"
     assert processed["location"] == "Austin, TX"
-    assert [event["event_type"] for event in events][-1] == "intake_complete"
+    assert [event["event_type"] for event in events][-1] == "job_scored"
 
 
 def test_real_failure_payloads_persist_normalized_intake_fields(

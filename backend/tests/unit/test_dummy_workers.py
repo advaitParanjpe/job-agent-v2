@@ -19,8 +19,9 @@ def test_dummy_q1_is_deterministic(
     assert processed is not None
     assert processed["id"] == created_job["id"]
     assert processed["intake_status"] == "scored"
-    assert processed["overall_score"] is None
-    assert "Intake complete" in str(processed["reason"])
+    assert processed["overall_score"] is not None
+    assert processed["selected_cv_family"] is not None
+    assert "matched" in str(processed["reason"])
     assert second is None
 
 

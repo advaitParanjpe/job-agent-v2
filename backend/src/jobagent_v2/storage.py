@@ -18,7 +18,7 @@ from jobagent_v2.url_utils import normalize_url, source_site_from_url
 from jobagent_v2.util import utc_now_iso
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 
 class JobNotFoundError(LookupError):
@@ -101,6 +101,60 @@ class Repository:
                     metadata_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS job_block_scores (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    scoring_version TEXT NOT NULL,
+                    block_id TEXT NOT NULL,
+                    block_type TEXT NOT NULL,
+                    block_name TEXT NOT NULL,
+                    technical_match INTEGER NOT NULL,
+                    keyword_match INTEGER NOT NULL,
+                    responsibility_match INTEGER NOT NULL,
+                    evidence_strength INTEGER NOT NULL,
+                    seniority_fit INTEGER NOT NULL,
+                    recency INTEGER NOT NULL,
+                    impressiveness INTEGER NOT NULL,
+                    domain_match INTEGER NOT NULL,
+                    risk_of_overclaim INTEGER NOT NULL,
+                    aggregate_score INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    matched_requirements_json TEXT NOT NULL,
+                    unmatched_requirements_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS job_scores (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    scoring_version TEXT NOT NULL,
+                    structured_jd_json TEXT NOT NULL,
+                    family_selection_json TEXT NOT NULL,
+                    section_scores_json TEXT NOT NULL,
+                    score_breakdown_json TEXT NOT NULL,
+                    strengths_json TEXT NOT NULL,
+                    gaps_json TEXT NOT NULL,
+                    hard_blockers_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS job_semantic_assessments (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    scoring_version TEXT NOT NULL,
+                    scoring_mode TEXT NOT NULL,
+                    llm_call_status TEXT NOT NULL,
+                    llm_failure_reason TEXT,
+                    model_name TEXT,
+                    prompt_version TEXT,
+                    semantic_schema_version TEXT,
+                    deterministic_family_json TEXT NOT NULL,
+                    llm_family_json TEXT,
+                    family_decision_json TEXT,
+                    semantic_assessment_json TEXT,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
             connection.execute(
@@ -132,6 +186,22 @@ class Repository:
             "raw_text_length": "INTEGER",
             "clean_text_length": "INTEGER",
             "jd_text_fingerprint": "TEXT",
+            "selected_cv_family": "TEXT",
+            "secondary_cv_family": "TEXT",
+            "cv_family_confidence": "TEXT",
+            "cv_family_selection_json": "TEXT",
+            "scoring_status": "TEXT",
+            "scoring_version": "TEXT",
+            "score_breakdown_json": "TEXT",
+            "section_scores_json": "TEXT",
+            "strengths_json": "TEXT",
+            "gaps_json": "TEXT",
+            "hard_blockers_json": "TEXT",
+            "scoring_mode": "TEXT",
+            "llm_call_status": "TEXT",
+            "llm_failure_reason": "TEXT",
+            "llm_model": "TEXT",
+            "llm_prompt_version": "TEXT",
         }
         for name, ddl in columns.items():
             if name not in existing:
@@ -224,7 +294,7 @@ class Repository:
         params: tuple[Any, ...] = ()
         if not include_archived:
             query += " WHERE archived_at IS NULL"
-        query += " ORDER BY manual_priority DESC, created_at ASC"
+        query += " ORDER BY manual_priority DESC, overall_score DESC, created_at ASC"
         with self.connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [row_to_job(row) for row in rows]
@@ -404,6 +474,131 @@ class Repository:
             ).fetchone()
         return row_to_job(row) if row is not None else None
 
+    def save_scoring_result(self, job_id: str, result: Any) -> None:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            self._get_job_row(connection, job_id)
+            connection.execute("DELETE FROM job_block_scores WHERE job_id = ?", (job_id,))
+            for block in result.block_scores:
+                connection.execute(
+                    """INSERT INTO job_block_scores (
+                    id, job_id, scoring_version, block_id, block_type, block_name,
+                    technical_match, keyword_match, responsibility_match, evidence_strength,
+                    seniority_fit, recency, impressiveness, domain_match, risk_of_overclaim,
+                    aggregate_score, reason, matched_requirements_json, unmatched_requirements_json,
+                    created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        str(uuid4()), job_id, block["scoring_version"], block["block_id"],
+                        block["block_type"], block["block_name"], block["technical_match"],
+                        block["keyword_match"], block["responsibility_match"],
+                        block["evidence_strength"], block["seniority_fit"], block["recency"],
+                        block["impressiveness"], block["domain_match"], block["risk_of_overclaim"],
+                        block["aggregate_score"], block["reason"],
+                        json.dumps(block["matched_requirements"]),
+                        json.dumps(block["unmatched_requirements"]), now,
+                    ),
+                )
+            connection.execute("DELETE FROM job_scores WHERE job_id = ?", (job_id,))
+            hybrid = result.score_breakdown.get("hybrid", {})
+            connection.execute("DELETE FROM job_semantic_assessments WHERE job_id = ?", (job_id,))
+            connection.execute(
+                """INSERT INTO job_semantic_assessments (
+                id, job_id, scoring_version, scoring_mode, llm_call_status,
+                llm_failure_reason, model_name, prompt_version, semantic_schema_version,
+                deterministic_family_json, llm_family_json, family_decision_json,
+                semantic_assessment_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    str(uuid4()),
+                    job_id,
+                    result.score_breakdown.get(
+                        "hybrid_formula_version", "phase3-deterministic-v1"
+                    ),
+                    hybrid.get("scoring_mode", "deterministic_only"),
+                    hybrid.get("llm_call_status", "not_called"),
+                    hybrid.get("llm_failure_reason"),
+                    hybrid.get("model"),
+                    hybrid.get("prompt_version"),
+                    hybrid.get("semantic_schema_version"),
+                    json.dumps(hybrid.get("deterministic_family", result.selection)),
+                    json.dumps(hybrid["llm_family"]) if hybrid.get("llm_family") else None,
+                    json.dumps(hybrid["family_decision"])
+                    if hybrid.get("family_decision")
+                    else None,
+                    json.dumps(hybrid["semantic_assessment"])
+                    if hybrid.get("semantic_assessment")
+                    else None,
+                    now,
+                ),
+            )
+            connection.execute(
+                """INSERT INTO job_scores (
+                id, job_id, scoring_version, structured_jd_json, family_selection_json,
+                section_scores_json, score_breakdown_json, strengths_json, gaps_json,
+                hard_blockers_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    str(uuid4()), job_id, "phase3-deterministic-v1",
+                    json.dumps(result.structured_jd, sort_keys=True),
+                    json.dumps(result.selection, sort_keys=True),
+                    json.dumps(result.section_scores, sort_keys=True),
+                    json.dumps(result.score_breakdown, sort_keys=True),
+                    json.dumps(result.strengths), json.dumps(result.gaps),
+                    json.dumps(result.hard_blockers), now,
+                ),
+            )
+            self._update_job(connection, job_id, {
+                "structured_jd_json": json.dumps(result.structured_jd, sort_keys=True),
+                "role_family": result.role_family,
+                "selected_cv_family": result.selection["primary_family"],
+                "secondary_cv_family": result.selection["secondary_family"],
+                "cv_family_confidence": result.selection["confidence"],
+                "cv_family_selection_json": json.dumps(result.selection, sort_keys=True),
+                "scoring_status": "complete",
+                "scoring_version": "phase3-deterministic-v1",
+                "scoring_mode": hybrid.get("scoring_mode", "deterministic_only"),
+                "llm_call_status": hybrid.get("llm_call_status", "not_called"),
+                "llm_failure_reason": hybrid.get("llm_failure_reason"),
+                "llm_model": hybrid.get("model"),
+                "llm_prompt_version": hybrid.get("prompt_version"),
+                "score_breakdown_json": json.dumps(result.score_breakdown, sort_keys=True),
+                "section_scores_json": json.dumps(result.section_scores, sort_keys=True),
+                "strengths_json": json.dumps(result.strengths),
+                "gaps_json": json.dumps(result.gaps),
+                "hard_blockers_json": json.dumps(result.hard_blockers),
+                "overall_score": result.overall_score,
+                "recommendation": result.recommendation,
+                "reason": result.reason,
+            })
+
+    def get_score(self, job_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM job_scores WHERE job_id = ? ORDER BY created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+        score = row_to_score(row) if row else None
+        if score is not None:
+            score["semantic_assessment"] = self.get_semantic_assessment(job_id)
+        return score
+
+    def get_semantic_assessment(self, job_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM job_semantic_assessments "
+                "WHERE job_id = ? ORDER BY created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+        return row_to_semantic_assessment(row) if row else None
+
+    def list_block_scores(self, job_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM job_block_scores WHERE job_id = ? ORDER BY aggregate_score DESC",
+                (job_id,),
+            ).fetchall()
+        return [row_to_block_score(row) for row in rows]
+
     def set_duplicate_warning(self, job_id: str, warning: str) -> dict[str, Any]:
         with self.connect() as connection:
             self._get_job_row(connection, job_id)
@@ -560,6 +755,30 @@ def row_to_job(row: sqlite3.Row) -> dict[str, Any]:
         "clean_text_length": row["clean_text_length"],
         "jd_text_fingerprint": row["jd_text_fingerprint"],
         "role_family": row["role_family"],
+        "selected_cv_family": row["selected_cv_family"],
+        "secondary_cv_family": row["secondary_cv_family"],
+        "cv_family_confidence": row["cv_family_confidence"],
+        "cv_family_selection": json.loads(row["cv_family_selection_json"])
+        if row["cv_family_selection_json"]
+        else None,
+        "scoring_status": row["scoring_status"],
+        "scoring_version": row["scoring_version"],
+        "scoring_mode": row["scoring_mode"],
+        "llm_call_status": row["llm_call_status"],
+        "llm_failure_reason": row["llm_failure_reason"],
+        "llm_model": row["llm_model"],
+        "llm_prompt_version": row["llm_prompt_version"],
+        "score_breakdown": json.loads(row["score_breakdown_json"])
+        if row["score_breakdown_json"]
+        else None,
+        "section_scores": json.loads(row["section_scores_json"])
+        if row["section_scores_json"]
+        else None,
+        "strengths": json.loads(row["strengths_json"]) if row["strengths_json"] else [],
+        "gaps": json.loads(row["gaps_json"]) if row["gaps_json"] else [],
+        "hard_blockers": json.loads(row["hard_blockers_json"])
+        if row["hard_blockers_json"]
+        else [],
         "overall_score": row["overall_score"],
         "recommendation": row["recommendation"],
         "reason": row["reason"],
@@ -570,6 +789,52 @@ def row_to_job(row: sqlite3.Row) -> dict[str, Any]:
         "archived_at": row["archived_at"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+    }
+
+
+def row_to_score(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "job_id": row["job_id"], "scoring_version": row["scoring_version"],
+        "structured_jd": json.loads(row["structured_jd_json"]),
+        "family_selection": json.loads(row["family_selection_json"]),
+        "section_scores": json.loads(row["section_scores_json"]),
+        "score_breakdown": json.loads(row["score_breakdown_json"]),
+        "strengths": json.loads(row["strengths_json"]), "gaps": json.loads(row["gaps_json"]),
+        "hard_blockers": json.loads(row["hard_blockers_json"]), "created_at": row["created_at"],
+    }
+
+
+def row_to_semantic_assessment(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "job_id": row["job_id"], "scoring_version": row["scoring_version"],
+        "scoring_mode": row["scoring_mode"], "llm_call_status": row["llm_call_status"],
+        "llm_failure_reason": row["llm_failure_reason"], "model": row["model_name"],
+        "prompt_version": row["prompt_version"],
+        "semantic_schema_version": row["semantic_schema_version"],
+        "deterministic_family": json.loads(row["deterministic_family_json"]),
+        "llm_family": json.loads(row["llm_family_json"]) if row["llm_family_json"] else None,
+        "family_decision": json.loads(row["family_decision_json"])
+        if row["family_decision_json"]
+        else None,
+        "semantic_assessment": json.loads(row["semantic_assessment_json"])
+        if row["semantic_assessment_json"]
+        else None,
+        "created_at": row["created_at"],
+    }
+
+
+def row_to_block_score(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "job_id": row["job_id"], "block_id": row["block_id"], "block_type": row["block_type"],
+        "block_name": row["block_name"], "technical_match": row["technical_match"],
+        "keyword_match": row["keyword_match"], "responsibility_match": row["responsibility_match"],
+        "evidence_strength": row["evidence_strength"], "seniority_fit": row["seniority_fit"],
+        "recency": row["recency"], "impressiveness": row["impressiveness"],
+        "domain_match": row["domain_match"], "risk_of_overclaim": row["risk_of_overclaim"],
+        "aggregate_score": row["aggregate_score"], "reason": row["reason"],
+        "matched_requirements": json.loads(row["matched_requirements_json"]),
+        "unmatched_requirements": json.loads(row["unmatched_requirements_json"]),
+        "scoring_version": row["scoring_version"], "created_at": row["created_at"],
     }
 
 

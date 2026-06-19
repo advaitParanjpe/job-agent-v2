@@ -12,8 +12,11 @@ for (const column of [
   "Company",
   "Title",
   "Location",
-  "JD quality",
+  "Score",
+  "Recommendation",
   "Role",
+  "CV family",
+  "Scoring mode",
   "Intake status",
   "Packet status",
   "Reason / warnings",
@@ -50,6 +53,7 @@ assertEqual(
 assertEqual(dashboard.actionEndpoint("job-1", "generate"), "/api/jobs/job-1/generate");
 assertEqual(dashboard.actionEndpoint("job-1", "retry"), "/api/jobs/job-1/retry");
 assertEqual(dashboard.actionEndpoint("job-1", "archive"), "/api/jobs/job-1/archive");
+assertEqual(dashboard.actionEndpoint("job-1", "rescore"), "/api/jobs/job-1/rescore");
 
 const tbody = createElement("tbody");
 dashboard.renderJobs(
@@ -59,9 +63,12 @@ dashboard.renderJobs(
       company: "<unsafe>",
       title: "Engineer",
       location: "Austin, TX",
-      jd_quality_band: "manual_review",
-      role_family: null,
-      intake_status: "manual_review",
+      overall_score: 81,
+      recommendation: "Apply",
+      role_family: "Software Engineering",
+      selected_cv_family: "software",
+      scoring_mode: "hybrid",
+      intake_status: "scored",
       packet_status: "ready",
       reason: "Done",
       extraction_warnings: ["location_not_found"],
@@ -81,8 +88,11 @@ if (tbody.children[0].children[0].textContent !== "<unsafe>") {
 }
 assertEqual(tbody.children[0].children[1].textContent, "Engineer");
 assertEqual(tbody.children[0].children[2].textContent, "Austin, TX");
-assertEqual(tbody.children[0].children[3].textContent, "manual_review");
-assertEqual(tbody.children[0].children[4].textContent, "-");
+assertEqual(tbody.children[0].children[3].textContent, "81");
+assertEqual(tbody.children[0].children[4].textContent, "Apply");
+assertEqual(tbody.children[0].children[5].textContent, "Software Engineering");
+    assertEqual(tbody.children[0].children[6].textContent, "software");
+assertEqual(tbody.children[0].children[7].textContent, "hybrid");
 
 const queuedBody = createElement("tbody");
 dashboard.renderJobs(
@@ -92,8 +102,11 @@ dashboard.renderJobs(
       company: null,
       title: null,
       location: null,
-      jd_quality_band: null,
+      overall_score: null,
+      recommendation: null,
       role_family: null,
+      selected_cv_family: null,
+      scoring_mode: null,
       intake_status: "queued",
       packet_status: "not_requested",
       source_url: "https://example.com/queued",
@@ -102,7 +115,7 @@ dashboard.renderJobs(
   queuedBody,
   async () => ({}),
 );
-assertEqual(queuedBody.children[0].children[5].textContent, "Queued - not processed");
+assertEqual(queuedBody.children[0].children[8].textContent, "Queued - not processed");
 
 console.log("frontend dashboard checks passed");
 

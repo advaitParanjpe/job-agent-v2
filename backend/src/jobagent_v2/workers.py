@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 
 from jobagent_v2.intake import intake_result_to_updates, run_intake
+from jobagent_v2.hybrid_scoring import score_hybrid_job
+from jobagent_v2.scoring import ScoringConfigurationError
 from jobagent_v2.storage import Repository
 from jobagent_v2.util import utc_now_iso
 
@@ -68,21 +70,51 @@ class DummyQ1Worker:
                     "manual_review_reason": result.manual_review_reason,
                 },
             )
+        self.repository.transition_intake(
+            job_id,
+            "scoring",
+            event_type="scoring_started",
+            message="Intake complete; deterministic Queue 1 scoring started.",
+            metadata={"quality_band": result.quality.band, "warnings": result.warnings},
+        )
+        return self._score_job(job_id)
+
+    def rescore(self, job_id: str) -> dict[str, object]:
+        self.repository.transition_intake(
+            job_id, "scoring", event_type="rescore_started", message="Manual rescore started."
+        )
+        return self._score_job(job_id)
+
+    def _score_job(self, job_id: str) -> dict[str, object]:
+        job = self.repository.get_job(job_id)
+        try:
+            result = score_hybrid_job(job)
+            self.repository.save_scoring_result(job_id, result)
+        except (ScoringConfigurationError, OSError, ValueError) as error:
+            return self.repository.transition_intake(
+                job_id,
+                "failed",
+                event_type="scoring_failed",
+                message=str(error),
+                updates={
+                    "failure_reason": str(error),
+                    "reason": "Queue 1 scoring failed.",
+                    "scoring_status": "failed",
+                },
+                metadata={"stage": "job_scoring"},
+            )
         final_job = self.repository.transition_intake(
             job_id,
             "scored",
-            event_type="intake_complete",
-            message="Deterministic intake completed.",
-            updates={
-                "reason": f"Intake complete with {result.quality.band} JD quality.",
-            },
-            metadata={"quality_band": result.quality.band, "warnings": result.warnings},
+            event_type="job_scored",
+            message="Deterministic Queue 1 scoring completed.",
+            updates={"scoring_status": "complete"},
+            metadata={"scoring_version": result.score_breakdown["formula_version"]},
         )
         duplicate = self.repository.find_probable_duplicate(
             job_id=job_id,
-            company=result.company.value,
-            title=result.title.value,
-            jd_text_fingerprint=result.duplicate_fingerprint,
+            company=str(job.get("company") or ""), title=str(job.get("title") or ""),
+            jd_text_fingerprint=str(job.get("jd_text_fingerprint") or ""),
         )
         if duplicate is not None:
             final_job = self.repository.set_duplicate_warning(
