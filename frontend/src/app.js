@@ -14,6 +14,7 @@ const DASHBOARD_COLUMNS = [
   "Intake status",
   "Q2 task status",
   "Promotion reason",
+  "Packet",
   "Reason / warnings",
   "Source",
   "Actions",
@@ -98,6 +99,7 @@ function renderJobs(jobs, tbody, onAction = apiPost) {
     appendCell(row, intakeStatusLabel(job.intake_status));
     appendCell(row, displayValue(job.packet_status));
     appendCell(row, displayValue(job.promotion_reason));
+    appendCell(row, packetSummary(job.packet));
     appendCell(row, reasonAndWarnings(job));
     appendSourceCell(row, job.source_url);
     appendActionsCell(row, job, onAction);
@@ -144,15 +146,28 @@ function appendActionsCell(row, job, onAction) {
     cell.appendChild(buildActionButton(job, "retry", "Retry", onAction));
   }
   cell.appendChild(buildActionButton(job, "archive", "Archive", onAction));
-  if (job.placeholder_artifact_path) {
-    const artifact = document.createElement("a");
-    artifact.href = job.placeholder_artifact_path;
-    artifact.target = "_blank";
-    artifact.rel = "noreferrer";
-    artifact.textContent = "Open placeholder artifact";
-    cell.appendChild(artifact);
+  if (job.packet) {
+    const pdf = document.createElement("a");
+    pdf.href = `${API_BASE_URL}/api/packets/${job.packet.packet_id}/pdf`;
+    pdf.target = "_blank";
+    pdf.rel = "noreferrer";
+    pdf.textContent = "Open PDF";
+    cell.appendChild(pdf);
+    const manifest = document.createElement("a");
+    manifest.href = `${API_BASE_URL}/api/packets/${job.packet.packet_id}/manifest`;
+    manifest.target = "_blank";
+    manifest.rel = "noreferrer";
+    manifest.textContent = "View manifest";
+    cell.appendChild(manifest);
   }
   row.appendChild(cell);
+}
+
+function packetSummary(packet) {
+  if (!packet) return "-";
+  if (packet.status === "failed") return `Failed: ${packet.failure_reason || "unknown failure"}`;
+  if (packet.status === "ready" && packet.page_count > 1) return `Generated — requires fitting (${packet.page_count} pages)`;
+  return `${packet.status} | ${packet.selected_cv_family || "-"} | ${packet.page_count || "?"} page(s)`;
 }
 
 function reasonAndWarnings(job) {
@@ -214,6 +229,7 @@ globalThis.JobAgentV2Dashboard = {
   bindIntakeQueueAction,
   displayValue,
   intakeStatusLabel,
+  packetSummary,
   reasonAndWarnings,
   renderJobs,
 };

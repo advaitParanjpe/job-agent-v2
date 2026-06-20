@@ -203,6 +203,9 @@ Auto-packet budget is respected
 
 ## Phase 5: Basic packet generation
 
+Status: implemented pending required four-packet human review in
+`docs/build_reports/phase_5_basic_packet_generation.md`.
+
 Goal:
 
 ```text

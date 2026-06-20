@@ -26,11 +26,13 @@ class JobService:
         jobs = self.repository.list_jobs(include_archived=include_archived)
         for job in jobs:
             job["q2_eligibility"] = q2_eligibility(job, config)
+            job["packet"] = self.repository.get_packet_for_job(str(job["id"]))
         return {"jobs": jobs}
 
     def get_job(self, job_id: str) -> dict[str, Any]:
         job = self.repository.get_job(job_id)
         job["q2_eligibility"] = q2_eligibility(job, PromotionConfig.from_env())
+        job["packet"] = self.repository.get_packet_for_job(job_id)
         return {"job": job}
 
     def get_events(self, job_id: str) -> dict[str, Any]:
@@ -79,6 +81,23 @@ class JobService:
 
     def get_q2_task(self, job_id: str) -> dict[str, Any]:
         return {"task": self.repository.get_q2_task(job_id)}
+
+    def get_packet_for_job(self, job_id: str) -> dict[str, Any]:
+        return {"packet": self.repository.get_packet_for_job(job_id)}
+
+    def get_packet(self, packet_id: str) -> dict[str, Any]:
+        return {"packet": self.repository.get_packet(packet_id)}
+
+    def packet_artifact(self, packet_id: str, field: str) -> Path:
+        packet = self.repository.get_packet(packet_id)
+        raw = packet.get(field)
+        if not raw:
+            raise FileNotFoundError("packet artifact is unavailable")
+        root = (self.artifact_root / "packets").resolve()
+        path = Path(str(raw)).resolve()
+        if root not in path.parents or not path.is_file():
+            raise FileNotFoundError("packet artifact is unavailable")
+        return path
 
     def list_q2_tasks(self) -> dict[str, Any]:
         config = PromotionConfig.from_env()

@@ -18,7 +18,7 @@ from jobagent_v2.url_utils import normalize_url, source_site_from_url
 from jobagent_v2.util import utc_now_iso
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class JobNotFoundError(LookupError):
@@ -175,6 +175,27 @@ class Repository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_q2_tasks_status_priority
                 ON q2_tasks(status, priority DESC, created_at ASC);
+
+                CREATE TABLE IF NOT EXISTS packets (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    q2_task_id TEXT NOT NULL REFERENCES q2_tasks(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL,
+                    selected_cv_family TEXT,
+                    artifact_directory TEXT,
+                    pdf_path TEXT,
+                    tex_path TEXT,
+                    manifest_path TEXT,
+                    selected_cv_path TEXT,
+                    page_count INTEGER,
+                    failure_stage TEXT,
+                    failure_reason TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_packets_job_created
+                ON packets(job_id, created_at DESC);
                 """
             )
             connection.execute(
@@ -225,6 +246,7 @@ class Repository:
             "starred": "INTEGER NOT NULL DEFAULT 0",
             "priority_updated_at": "TEXT",
             "promotion_reason": "TEXT",
+            "current_packet_id": "TEXT",
         }
         for name, ddl in columns.items():
             if name not in existing:
@@ -425,6 +447,113 @@ class Repository:
                 "SELECT * FROM q2_tasks WHERE job_id = ?", (job_id,)
             ).fetchone()
         return row_to_q2_task(row) if row else None
+
+    def get_packet(self, packet_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM packets WHERE id = ?", (packet_id,)).fetchone()
+        if row is None:
+            raise JobNotFoundError(packet_id)
+        return row_to_packet(row)
+
+    def get_packet_for_job(self, job_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM packets WHERE job_id = ? ORDER BY created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+        return row_to_packet(row) if row else None
+
+    def create_packet_attempt(self, task_id: str, job_id: str) -> dict[str, Any]:
+        now = utc_now_iso()
+        packet_id = str(uuid4())
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO packets (id, job_id, q2_task_id, status, selected_cv_family,
+                created_at, updated_at) VALUES (?, ?, ?, 'generating', ?, ?, ?)""",
+                (packet_id, job_id, task_id,
+                 self._get_job_row(connection, job_id)["selected_cv_family"], now, now),
+            )
+            self._update_job(connection, job_id, {"current_packet_id": packet_id})
+            row = connection.execute(
+                "SELECT * FROM packets WHERE id = ?", (packet_id,)
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("packet attempt did not persist")
+        return row_to_packet(row)
+
+    def complete_packet_attempt(
+        self, task_id: str, packet_id: str, *, artifact_directory: str,
+        pdf_path: str, tex_path: str, selected_cv_path: str, manifest_path: str,
+        page_count: int | None,
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            task = connection.execute(
+                "SELECT * FROM q2_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if task is None or task["status"] != "running":
+                raise ValueError("only running Q2 tasks can complete a packet")
+            connection.execute(
+                """UPDATE packets SET status='ready', artifact_directory=?, pdf_path=?,
+                tex_path=?, selected_cv_path=?, manifest_path=?, page_count=?,
+                updated_at=?, completed_at=? WHERE id=?""",
+                (artifact_directory, pdf_path, tex_path, selected_cv_path, manifest_path,
+                 page_count, now, now, packet_id),
+            )
+            connection.execute(
+                """UPDATE q2_tasks SET status='ready', completed_at=?, lease_owner=NULL,
+                lease_expires_at=NULL, updated_at=?, failure_reason=NULL WHERE id=?""",
+                (now, now, task_id),
+            )
+            job = self._get_job_row(connection, task["job_id"])
+            validate_packet_transition(job["packet_status"], "ready")
+            self._update_job(
+                connection, task["job_id"],
+                {"packet_status": "ready", "placeholder_artifact_path": pdf_path},
+            )
+            self._insert_event(
+                connection, job_id=task["job_id"], event_type="packet_ready",
+                from_status="generating", to_status="ready",
+                message="Phase 5 packet PDF generated.",
+                metadata={"task_id": task_id, "packet_id": packet_id, "page_count": page_count},
+            )
+            row = connection.execute(
+                "SELECT * FROM packets WHERE id = ?", (packet_id,)
+            ).fetchone()
+        return row_to_packet(row)
+
+    def fail_packet_attempt(
+        self, task_id: str, packet_id: str, *, stage: str, reason: str
+    ) -> None:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            task = connection.execute(
+                "SELECT * FROM q2_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if task is None:
+                return
+            connection.execute(
+                "UPDATE packets SET status='failed', failure_stage=?, failure_reason=?, "
+                "updated_at=? WHERE id=?",
+                (stage, reason, now, packet_id),
+            )
+            connection.execute(
+                """UPDATE q2_tasks SET status='failed', failure_reason=?, lease_owner=NULL,
+                lease_expires_at=NULL, updated_at=? WHERE id=?""",
+                (f"{stage}: {reason}", now, task_id),
+            )
+            self._update_job(
+                connection, task["job_id"],
+                {"packet_status": "failed", "failure_reason": reason,
+                 "reason": "Packet generation failed."},
+            )
+            self._insert_event(
+                connection, job_id=task["job_id"], event_type="packet_failed",
+                from_status="generating", to_status="failed",
+                message="Phase 5 packet generation failed.",
+                metadata={"task_id": task_id, "packet_id": packet_id, "stage": stage,
+                          "reason": reason},
+            )
 
     def list_q2_tasks(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -721,7 +850,13 @@ class Repository:
                 self._update_job(
                     connection,
                     job_id,
-                    {"packet_status": "queued", "reason": "Retry queued for dummy Q2."},
+                    {"packet_status": "queued", "reason": "Retry queued for packet generation.",
+                     "failure_reason": None},
+                )
+                connection.execute(
+                    "UPDATE q2_tasks SET status='queued', failure_reason=NULL, "
+                    "updated_at=? WHERE job_id=?",
+                    (utc_now_iso(), job_id),
                 )
                 self._insert_event(
                     connection,
@@ -1051,6 +1186,7 @@ def row_to_job(row: sqlite3.Row) -> dict[str, Any]:
         "starred": bool(row["starred"]),
         "priority_updated_at": row["priority_updated_at"],
         "promotion_reason": row["promotion_reason"],
+        "current_packet_id": row["current_packet_id"],
         "placeholder_artifact_path": row["placeholder_artifact_path"],
         "archived_at": row["archived_at"],
         "created_at": row["created_at"],
@@ -1076,6 +1212,20 @@ def row_to_q2_task(row: sqlite3.Row) -> dict[str, Any]:
         "started_at": row["started_at"],
         "completed_at": row["completed_at"],
         "updated_at": row["updated_at"],
+    }
+
+
+def row_to_packet(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"], "packet_id": row["id"], "job_id": row["job_id"],
+        "q2_task_id": row["q2_task_id"], "status": row["status"],
+        "selected_cv_family": row["selected_cv_family"],
+        "artifact_directory": row["artifact_directory"],
+        "pdf_path": row["pdf_path"], "tex_path": row["tex_path"],
+        "selected_cv_path": row["selected_cv_path"], "manifest_path": row["manifest_path"],
+        "page_count": row["page_count"], "failure_stage": row["failure_stage"],
+        "failure_reason": row["failure_reason"], "created_at": row["created_at"],
+        "updated_at": row["updated_at"], "completed_at": row["completed_at"],
     }
 
 

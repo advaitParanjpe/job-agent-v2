@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -11,6 +10,14 @@ from jobagent_v2.hybrid_scoring import score_hybrid_job
 from jobagent_v2.promotion import PromotionConfig
 from jobagent_v2.scoring import ScoringConfigurationError
 from jobagent_v2.storage import Repository
+from jobagent_v2.packets import (
+    PacketGenerationError,
+    build_selected_cv,
+    compile_pdf,
+    render_latex,
+    safe_artifact_directory,
+    write_json,
+)
 from jobagent_v2.util import utc_now_iso
 
 
@@ -141,7 +148,7 @@ class DummyQ2Worker:
     def process_next(self) -> dict[str, object] | None:
         expiry = datetime.now(timezone.utc) + timedelta(seconds=self.config.lease_seconds)
         task = self.repository.claim_next_q2_task(
-            owner="dummy-q2-worker",
+            owner="phase5-packet-worker",
             concurrency=self.config.q2_worker_concurrency,
             lease_expires_at=expiry.isoformat(timespec="seconds"),
         )
@@ -149,19 +156,83 @@ class DummyQ2Worker:
             return None
         task = self.repository.start_q2_task(str(task["id"]))
         job = self.repository.get_job(str(task["job_id"]))
-        artifact_path = self._write_placeholder_artifact(job)
-        self.repository.complete_q2_task(str(task["id"]), str(artifact_path))
+        packet = self.repository.create_packet_attempt(str(task["id"]), str(task["job_id"]))
+        packet_id = str(packet["id"])
+        directory: Path | None = None
+        try:
+            directory = safe_artifact_directory(self.artifact_root, str(job["id"]), packet_id)
+            directory.mkdir(parents=True, exist_ok=True)
+            selected = build_selected_cv(
+                packet_id=packet_id, job=job,
+                block_scores=self.repository.list_block_scores(str(job["id"])),
+            )
+            tex = render_latex(selected)
+            tex_path = directory / "cv.tex"
+            tex_path.write_text(tex, encoding="utf-8")
+            selected_path = directory / "selected_cv.json"
+            write_json(selected_path, selected.to_dict())
+            pdf_path, compile_log, page_count = compile_pdf(tex, directory)
+            (directory / "compile.log").write_text(compile_log, encoding="utf-8")
+            manifest = self._manifest(
+                task, job, packet_id, selected.to_dict(), directory, page_count, None
+            )
+            manifest_path = directory / "manifest.json"
+            write_json(manifest_path, manifest)
+            self.repository.complete_packet_attempt(
+                str(task["id"]), packet_id, artifact_directory=str(directory),
+                pdf_path=str(pdf_path), tex_path=str(tex_path),
+                selected_cv_path=str(selected_path), manifest_path=str(manifest_path),
+                page_count=page_count,
+            )
+        except PacketGenerationError as error:
+            self._write_failure_manifest(
+                directory, task, job, packet_id, error.stage, error.reason
+            )
+            self.repository.fail_packet_attempt(
+                str(task["id"]), packet_id, stage=error.stage, reason=error.reason
+            )
+        except (OSError, ValueError) as error:
+            self._write_failure_manifest(
+                directory, task, job, packet_id, "save_output", str(error)
+            )
+            self.repository.fail_packet_attempt(
+                str(task["id"]), packet_id, stage="save_output", reason=str(error)
+            )
         return self.repository.get_job(str(task["job_id"]))
 
-    def _write_placeholder_artifact(self, job: dict[str, object]) -> Path:
-        job_id = str(job["id"])
-        safe_job_id = "".join(char for char in job_id if char.isalnum() or char == "-")
-        path = self.artifact_root / f"{safe_job_id}.json"
-        payload = {
-            "job_id": job_id,
-            "source_url": job["source_url"],
-            "created_at": utc_now_iso(),
-            "kind": "phase_1_placeholder_packet",
+    def _manifest(self, task, job, packet_id, selected, directory, page_count, failure):
+        paths = {
+            "directory": str(directory), "pdf": str(directory / "cv.pdf"),
+            "tex": str(directory / "cv.tex"), "selected_cv": str(directory / "selected_cv.json"),
         }
-        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        return path
+        selected_records = selected.get("selection_records", [])
+        return {
+            "manifest_version": "phase5-manifest-v1", "packet_id": packet_id,
+            "job_id": job["id"], "q2_task_id": task["id"], "company": job["company"],
+            "title": job["title"], "source_url": job["source_url"],
+            "selected_cv_family": selected.get("cv_family"),
+            "truth_bank_version": selected.get("truth_bank_version"),
+            "cv_family_version": selected.get("cv_family_version"),
+            "scoring_version": selected.get("scoring_version"),
+            "template_version": "phase5-basic-cv-v1",
+            "selected_blocks": [item for item in selected_records if item["selected"]],
+            "excluded_blocks": [item for item in selected_records if not item["selected"]],
+            "section_order": selected.get("section_order"),
+            "selected_skills": selected.get("skill_selection"),
+            "score_at_generation": job.get("overall_score"), "generated_at": utc_now_iso(),
+            "artifact_paths": paths,
+            "page_count": page_count,
+            "warnings": ["requires_fitting"] if page_count and page_count > 1 else [],
+            "compile_result": "success" if failure is None else "failed", "failure": failure,
+        }
+
+    def _write_failure_manifest(self, directory, task, job, packet_id, stage, reason):
+        if directory is None:
+            return
+        try:
+            manifest = self._manifest(
+                task, job, packet_id, {}, directory, None, {"stage": stage, "reason": reason}
+            )
+            write_json(directory / "manifest.json", manifest)
+        except OSError:
+            return

@@ -23,6 +23,10 @@ API_DOCUMENTATION = {
     "POST /api/jobs/{job_id}/unstar": "Remove a job star and restore normal priority.",
     "POST /api/jobs/{job_id}/priority": "Set manual priority to normal or high.",
     "GET /api/jobs/{job_id}/q2-task": "Return the job's persistent Q2 task, if any.",
+    "GET /api/jobs/{job_id}/packet": "Return the latest packet attempt for a job.",
+    "GET /api/packets/{packet_id}": "Return a packet attempt.",
+    "GET /api/packets/{packet_id}/manifest": "Return a packet manifest.",
+    "GET /api/packets/{packet_id}/pdf": "Serve a generated packet PDF.",
     "POST /api/jobs/{job_id}/retry": "Retry failed/manual-review dummy work.",
     "POST /api/jobs/{job_id}/archive": "Archive a job.",
     "GET /api/jobs/{job_id}/events": "Return persisted job event history.",
@@ -66,6 +70,22 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                 if path == "/api/queue/q2":
                     self._send_json(service.list_q2_tasks())
                     return
+                packet_id, packet_suffix = _match_packet_route(path)
+                if packet_id and packet_suffix == "":
+                    self._send_json(service.get_packet(packet_id))
+                    return
+                if packet_id and packet_suffix in {"/manifest", "/pdf"}:
+                    file_key = "manifest_path" if packet_suffix == "/manifest" else "pdf_path"
+                    try:
+                        file_path = service.packet_artifact(packet_id, file_key)
+                    except FileNotFoundError:
+                        self._send_json({"error": "packet artifact is unavailable"}, status=404)
+                        return
+                    content_type = (
+                        "application/json" if packet_suffix == "/manifest" else "application/pdf"
+                    )
+                    self._send_file(file_path, content_type)
+                    return
                 job_id, suffix = _match_job_route(path)
                 if job_id and suffix == "":
                     self._send_json(service.get_job(job_id))
@@ -84,6 +104,9 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                     return
                 if job_id and suffix == "/q2-task":
                     self._send_json(service.get_q2_task(job_id))
+                    return
+                if job_id and suffix == "/packet":
+                    self._send_json(service.get_packet_for_job(job_id))
                     return
                 self._send_json({"error": "not found"}, status=404)
             except JobNotFoundError as error:
@@ -159,6 +182,18 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(body)
 
+        def _send_file(self, path: Path, content_type: str) -> None:
+            if not path.is_file():
+                self._send_json({"error": "packet artifact is unavailable"}, status=404)
+                return
+            body = path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
     Handler.service = service
     return Handler
 
@@ -182,4 +217,15 @@ def _match_job_route(path: str) -> tuple[str | None, str]:
     if "/" in rest:
         job_id, suffix = rest.split("/", 1)
         return job_id, f"/{suffix}"
+    return rest, ""
+
+
+def _match_packet_route(path: str) -> tuple[str | None, str]:
+    prefix = "/api/packets/"
+    if not path.startswith(prefix):
+        return None, ""
+    rest = path[len(prefix):]
+    if "/" in rest:
+        packet_id, suffix = rest.split("/", 1)
+        return packet_id, f"/{suffix}"
     return rest, ""

@@ -22,6 +22,7 @@ for (const column of [
   "Intake status",
   "Q2 task status",
   "Promotion reason",
+  "Packet",
   "Reason / warnings",
   "Source",
   "Actions",
@@ -82,6 +83,7 @@ dashboard.renderJobs(
       extraction_warnings: ["location_not_found"],
       source_url: "https://example.com/job",
       placeholder_artifact_path: "artifact.json",
+      packet: { packet_id: "packet-1", status: "ready", selected_cv_family: "software", page_count: 2 },
     },
   ],
   tbody,
@@ -105,6 +107,8 @@ assertEqual(tbody.children[0].children[8].textContent, "Starred");
 assertEqual(tbody.children[0].children[9].textContent, "in_q2");
 assertEqual(tbody.children[0].children[11].textContent, "ready");
 assertEqual(tbody.children[0].children[12].textContent, "score_threshold");
+assertEqual(tbody.children[0].children[13].textContent, "Generated — requires fitting (2 pages)");
+assertEqual(dashboard.packetSummary({ status: "failed", failure_reason: "compile failed" }), "Failed: compile failed");
 
 const queuedBody = createElement("tbody");
 dashboard.renderJobs(

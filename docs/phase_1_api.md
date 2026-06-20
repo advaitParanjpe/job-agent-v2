@@ -204,6 +204,20 @@ and count toward `JOBAGENT_AUTO_PACKET_BUDGET`; manual Generate now does not.
 
 `GET /api/jobs/{job_id}/q2-task` returns the job's task or `null`.
 
+## Phase 5 packet endpoints
+
+`GET /api/jobs/{job_id}/packet` returns the most recent packet attempt, including
+status, selected CV family, page count, artifact metadata, and any persisted failure.
+`GET /api/packets/{packet_id}` returns the same packet entity directly.
+
+`GET /api/packets/{packet_id}/manifest` returns the versioned selection manifest.
+`GET /api/packets/{packet_id}/pdf` streams only the PDF registered for that packet;
+both routes reject unavailable or out-of-root artifacts with `404`.
+
+Packet failures return a packet with `status: "failed"`, `failure_stage`, and
+`failure_reason`. Retry through `POST /api/jobs/{job_id}/retry`; it requeues the
+existing persistent Q2 task and creates a new packet attempt when claimed.
+
 `POST /api/jobs/{job_id}/star` and `POST /api/jobs/{job_id}/unstar` set persistent
 manual priority. `POST /api/jobs/{job_id}/priority` accepts
 `{"priority":"normal"}` or `{"priority":"high"}`.

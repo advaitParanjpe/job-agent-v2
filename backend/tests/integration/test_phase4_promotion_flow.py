@@ -4,6 +4,7 @@ from jobagent_v2.promotion import PromotionConfig, PromotionScheduler
 from jobagent_v2.service import JobService
 from jobagent_v2.storage import Repository
 from jobagent_v2.workers import DummyQ2Worker
+from jobagent_v2.workers import DummyQ1Worker
 
 
 def _scored_job(service: JobService, repository: Repository, score: int) -> dict[str, object]:
@@ -85,7 +86,18 @@ def test_hard_blocker_prevents_manual_and_automatic_promotion(
 def test_q2_task_survives_restart_and_dummy_worker_completes(
     db_path, artifact_root, service: JobService, repository: Repository
 ) -> None:
-    job = _scored_job(service, repository, 90)
+    created = service.create_job(
+        {
+            "url": "https://example.com/jobs/real-q2",
+            "page_title": "RTL Engineer - Acme",
+            "visible_text": "Responsibilities\nDesign SystemVerilog RTL ASIC blocks.\n"
+            "Qualifications\nVerilog SystemVerilog Python RTL ASIC.",
+            "source_site": "example.com",
+            "captured_at": "2026-06-20T12:00:00Z",
+        }
+    )
+    job = DummyQ1Worker(repository).process_next()
+    assert job is not None and job["id"] == created["job_id"]
     PromotionScheduler(repository, PromotionConfig(q2_capacity=1)).run_once()
 
     restarted = Repository(db_path)
