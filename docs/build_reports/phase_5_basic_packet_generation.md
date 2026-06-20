@@ -4,8 +4,8 @@
 
 Replace the Q2 placeholder artifact with a deterministic, local CV packet pipeline.
 This phase selects existing canonical truth-bank content, renders it, compiles a PDF,
-and persists explainable artifacts. It does not rewrite, truth-check rewrites, prune
-content, or fit the document to one page.
+and persists explainable artifacts. It does not generate, rewrite, paraphrase, or
+truth-check CV prose.
 
 ## Implemented packet architecture
 
@@ -119,13 +119,13 @@ consistency, and absence of invented claims. Record whether a multi-page output 
 
 The generic starter truth banks are still placeholder canonical profile data and need
 replacement with the reviewed personal CV truth banks before production use. No
-Phase 6 rewriting/truth checking or Phase 7 fitting has been added.
+Future roadmap work is canonical truth-bank registration and deterministic fitting;
+generated-prose tailoring is rejected.
 
 ## Manual packet review
 
-Automated packet generation is complete. Required human review of hardware/RTL,
-CPU/GPU architecture, embedded, and software PDFs is still outstanding; record layout,
-truthfulness, selected blocks, section order, skill provenance, and page count before
-approving this phase.
+Hardware/RTL, CPU/GPU architecture, embedded/firmware, and software representative
+packets were manually validated: packet generation, PDF compilation, artifact links,
+canonical content preservation, selection decisions, and manifest/PDF review passed.
 
-PHASE BLOCKED — HUMAN DECISION REQUIRED
+PHASE READY FOR REVIEW

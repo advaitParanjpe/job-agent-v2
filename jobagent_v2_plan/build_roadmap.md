@@ -18,6 +18,16 @@ Before implementing each phase, inspect the V1 reference map for related
 components. Use V1 to recover lessons, tests, invariants, and edge cases. Do not
 treat the map as permission to copy code.
 
+## Canonical-content product boundary
+
+The core product tailors through CV-family selection, canonical block scoring and
+ordering, Projects-versus-Experience section ordering, approved skill selection,
+optional block exclusion for fitting, deterministic rendering, and manual review.
+All rendered wording is pre-approved canonical content. Free-form bullet rewriting,
+LLM reframing, paraphrasing, terminology substitution, semantic refinement, generated
+summaries/headlines, rewrite scoring loops, and truth-checking generated rewrites are
+rejected ideas: they are not deferred phases and are not planned runtime features.
+
 ---
 
 ## Phase 0: Planning docs
@@ -203,13 +213,13 @@ Auto-packet budget is respected
 
 ## Phase 5: Basic packet generation
 
-Status: implemented pending required four-packet human review in
+Status: manually validated successfully; ready for continuing roadmap review in
 `docs/build_reports/phase_5_basic_packet_generation.md`.
 
 Goal:
 
 ```text
-Generate a valid CV packet without reframing.
+Generate a valid packet from canonical CV content without generated prose.
 ```
 
 Build:
@@ -236,54 +246,41 @@ Manifest explains selected blocks and section order
 
 ---
 
-## Phase 6: Reframing and truth checking
+## Phase 6: Real CV Families and Canonical Truth Banks
 
 Goal:
 
 ```text
-Improve selected CV blocks without hallucination.
+Replace placeholder content with validated, role-specific canonical CV families.
 ```
 
 Build:
 
 ```text
-selected-block reframing
-one attempt per block
-max 2–3 reframed blocks
-truth checker
-style checker
-rescore original vs reframed
-accept/reject gate
-rewrite summary in manifest
-```
-
-Acceptance gate:
-
-```text
-truth_check_passes
-AND no unsupported claims
-AND no unsupported metric changes
-AND no new technology invented
-AND style_check_passes
-AND reframed_score >= original_score
+ingestion or registration of real role-specific CVs
+canonical block IDs
+validated experience/project/education/skills data
+family metadata, versioning, and source provenance
+CV-family preview and validation
+replacement of placeholder truth-bank content
+configurable families, including digital_ic_rtl, cpu_gpu_architecture,
+soc_verification, fpga, embedded_firmware, and software
 ```
 
 Acceptance test:
 
 ```text
-Reframed blocks are only accepted when truth-safe and score-improving
-Rejected reframes preserve original text
-Manifest records accepted/rejected rewrites
+Registered family previews contain only approved canonical content and version data.
 ```
 
 ---
 
-## Phase 7: One-page fitting
+## Phase 7: Deterministic One-Page Fitting
 
 Goal:
 
 ```text
-Make the CV one page without making it ugly.
+Fit a canonical selected CV to one page without changing its wording.
 ```
 
 Build fitting tiers:
@@ -292,10 +289,8 @@ Build fitting tiers:
 Tier 0: normal template
 Tier 1: tighter spacing
 Tier 2: slightly smaller font
-Tier 3: remove lowest-scoring optional bullet
-Tier 4: remove lowest-scoring optional block
-Tier 5: remove second-lowest optional block
-Tier 6: manual review fail state
+Tier 3: remove lowest-scoring optional block
+Tier 4: visible manual-review failure
 ```
 
 Hard limits:
@@ -307,24 +302,24 @@ max block removals: 2
 never remove education
 never remove contact/header
 never remove role-critical required skills
+never rewrite or compress a bullet
 ```
 
 Acceptance test:
 
 ```text
-PDF page count is measured after each render
-System stops once one page is achieved
-System fails to manual_review if one page cannot be achieved cleanly
+Render, measure page count, apply only bounded layout changes, rerender, then remove
+the lowest-scoring optional block if necessary. Fail visibly if no safe fit is possible.
 ```
 
 ---
 
-## Phase 8: Polish and reliability
+## Phase 8: Workflow and Review Polish
 
 Goal:
 
 ```text
-Make it pleasant to use daily.
+Complete the local review and application-ready workflow.
 ```
 
 Build:
@@ -332,22 +327,18 @@ Build:
 ```text
 retry buttons
 archive/mark applied
-Open JD
-Open PDF
-filter by status
-sort by score
-manual notes
-export CSV, optional
+PDF preview/open action
+manifest explanation
+regenerate action
+family and section-order visibility
+failure recovery and queue reliability
 ```
 
 Acceptance test:
 
 ```text
-Daily usage flow works:
-capture many jobs
-review ranked table
-generate packets for top jobs
-mark applied/archive
+Capture, review ranked jobs, generate a canonical packet, inspect the PDF/manifest,
+recover a failure, and mark the application workflow state. No auto-apply.
 ```
 
 ---

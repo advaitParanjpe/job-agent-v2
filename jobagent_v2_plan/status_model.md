@@ -60,8 +60,6 @@ Allowed values:
 not_requested
 queued
 generating
-rewriting
-truth_checking
 rendering
 fitting
 ready
@@ -76,10 +74,8 @@ skipped_low_score
 not_requested      = no packet requested/generated yet
 queued             = waiting for Queue 2
 generating         = building CV plan
-rewriting          = attempting selected block reframes
-truth_checking     = verifying rewritten claims
 rendering          = generating PDF
-fitting            = applying one-page fit loop
+fitting            = applying bounded deterministic layout and optional-block fitting
 ready              = final packet is available
 failed             = packet generation failed
 manual_review      = user input needed
@@ -165,8 +161,6 @@ job_scoring
 block_scoring
 promotion
 cv_plan
-rewrite
-truth_check
 render
 fit
 save_output
@@ -201,7 +195,7 @@ Allowed when:
 ```text
 packet generation failed
 render failed
-truth check failed with fallback possible
+one-page fit failed
 ```
 
 Action:
@@ -219,7 +213,6 @@ Used when:
 ```text
 JD extraction quality too low
 CV did not fit after max pruning
-truth check rejected too many reframes
 practical constraints are unclear
 ```
 

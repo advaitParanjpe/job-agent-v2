@@ -290,6 +290,12 @@ job_id pushed to Queue 2
 
 Queue 2 creates the tailored CV packet.
 
+```text
+Q2 task → load selected CV family → load canonical truth-bank blocks → rank existing
+blocks → choose section order → construct selected CV → render → one-page fitting →
+final packet
+```
+
 ### Step 1: Load job context
 
 Load:
@@ -386,75 +392,11 @@ template settings
 initial bullet order
 ```
 
-### Step 6: Reframe selected blocks
+### Step 6: Render canonical selected CV
 
-Do not reframe every block.
-
-Attempt reframing only for selected blocks where JD-specific framing could help.
-
-Suggested limits:
-
-```text
-max_reframed_blocks = 2 or 3
-max_attempts_per_block = 1
-```
-
-Allowed operations:
-
-```text
-reorder bullets
-tighten bullets
-replace weak verbs
-emphasize JD-relevant technologies already present
-rewrite bullets using only supported facts
-```
-
-Forbidden operations:
-
-```text
-add new bullets
-invent technologies
-invent metrics
-change dates
-change company/project scope
-inflate ownership
-claim production use if unsupported
-claim tapeout/signoff if unsupported
-```
-
-### Step 7: Truth check reframed blocks
-
-Acceptance gate:
-
-```text
-truth_check_passes
-AND no unsupported claims
-AND no unsupported metric changes
-AND no new technology invented
-AND style_check_passes
-```
-
-### Step 8: Rescore reframed blocks
-
-For each reframed block:
-
-```text
-original_score
-reframed_score
-score_delta
-accepted_reframe
-rejection_reason
-```
-
-Accept only if:
-
-```text
-reframed_score >= original_score
-AND truth_check_passes
-AND style_check_passes
-```
-
-### Step 9: Render PDF
+All selected block and skill wording is canonical truth-bank content. Rendering may
+escape LaTeX and apply configured layout settings; it must not rewrite, paraphrase, or
+generate CV prose.
 
 Generate:
 
@@ -465,7 +407,7 @@ Generate:
 
 Save intermediate files for debugging.
 
-### Step 10: One-page fitting
+### Step 7: Deterministic one-page fitting
 
 Check page count after each render.
 
@@ -475,10 +417,8 @@ Fitting tiers:
 Tier 0: normal template
 Tier 1: tighter spacing
 Tier 2: slightly smaller font
-Tier 3: remove lowest-scoring optional bullet
-Tier 4: remove lowest-scoring optional block
-Tier 5: remove second-lowest optional block
-Tier 6: manual review fail state
+Tier 3: remove the lowest-scoring optional block
+Tier 4: manual review fail state
 ```
 
 Hard constraints:
@@ -490,9 +430,10 @@ max block removals: 2
 never remove education
 never remove contact/header
 never remove role-critical required skills
+never alter wording inside a bullet
 ```
 
-### Step 11: Save final packet
+### Step 8: Save final packet
 
 Save:
 
@@ -570,7 +511,6 @@ Retries should be stage-specific.
 JD extraction failed → allow retry with selected text/manual paste
 scoring failed → retry scoring
 packet failed → retry packet generation
-truth check failed → keep original block or manual review
 fit failed → manual review
 ```
 
@@ -590,11 +530,8 @@ cv_family_selected
 job_scored
 promoted_to_q2
 packet_generation_started
-block_reframed
-truth_check_passed
-truth_check_failed
 pdf_rendered
 fit_tier_applied
-packet_ready
+optional_block_excluded_for_fit
 packet_failed
 ```

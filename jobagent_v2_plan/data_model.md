@@ -217,6 +217,12 @@ architecture_truth_bank
 
 Represents one generated application packet for a job.
 
+Canonical content invariant: `packet_blocks.canonical_text` is copied unchanged from
+the selected CV family or validated truth bank. Packet data records selection,
+ordering, fitting, layout, exclusions, and artifact versions; it does not require
+rewritten text, rewrite scores, prompt versions, truth checks, or rewrite acceptance
+fields.
+
 ```text
 id
 job_id
@@ -229,9 +235,8 @@ score_json_path
 selected_cv_family
 section_order_json
 selected_blocks_json
-rewrite_summary_json
 fit_summary_json
-truth_check_summary_json
+selection_summary_json
 created_at
 updated_at
 ```
@@ -241,8 +246,6 @@ updated_at
 ```text
 queued
 generating
-rewriting
-truth_checking
 rendering
 fitting
 ready
@@ -265,13 +268,10 @@ block_type
 block_name
 section_name
 position
-original_text
-final_text
-original_score
-final_score
-was_reframed
-reframe_accepted
-reframe_rejection_reason
+source_block_id
+canonical_text
+block_score
+selection_reason
 was_pruned
 prune_reason
 created_at
@@ -308,12 +308,9 @@ job_scored
 block_scored
 promoted_to_q2
 packet_generation_started
-block_reframed
-truth_check_passed
-truth_check_failed
 pdf_rendered
 fit_tier_applied
-block_pruned
+optional_block_excluded_for_fit
 packet_ready
 packet_failed
 manual_override_applied
@@ -372,8 +369,6 @@ manual_review
 not_requested
 queued
 generating
-rewriting
-truth_checking
 rendering
 fitting
 ready
@@ -415,23 +410,9 @@ Example:
     "Experience",
     "Skills"
   ],
-  "rewrites": [
-    {
-      "block": "TinyNPU",
-      "accepted": true,
-      "score_before": 82,
-      "score_after": 88,
-      "truth_check_passed": true
-    }
-  ],
   "fit": {
     "template_tier": 2,
-    "removed_blocks": [],
-    "removed_bullets": []
-  },
-  "truth_check": {
-    "passed": true,
-    "issues": []
+    "removed_optional_blocks": []
   },
   "versions": {
     "model": "TBD",
@@ -455,8 +436,6 @@ Example:
 Every scoring and packet generation run should store:
 
 ```text
-model name
-prompt version
 truth bank version
 CV template version
 scoring weights version
@@ -486,7 +465,6 @@ JD quality too low
 company/title missing
 LLM JSON parse failed
 block scoring failed
-truth check failed
 PDF render failed
 one-page fit failed
 no suitable blocks found

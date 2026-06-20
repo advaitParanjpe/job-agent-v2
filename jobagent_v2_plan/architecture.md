@@ -475,10 +475,7 @@ manual_overrides, optional
 build CV plan
 select visible blocks
 choose section order
-attempt safe reframing
-truth-check reframed blocks
-rescore reframed blocks
-accept/reject reframes
+select approved skills
 render PDF
 fit to one page
 save final packet
@@ -491,7 +488,18 @@ save packet manifest
 no raw page extraction
 no initial JD parsing
 no initial job scoring unless re-run requested
+no generated prose
+no bullet rewriting or semantic paraphrasing
 ```
+
+### Canonical content policy
+
+All rendered experience and project wording must come unchanged from the selected CV
+family or validated truth bank. The system may include a block, exclude an optional
+block, move a block or section, and select approved skills. It may not rewrite a
+bullet, paraphrase a claim, add a claim, alter a metric, infer an unsupported
+technology, or generate new CV prose. LaTeX escaping, whitespace, and bounded layout
+changes are safe formatting operations.
 
 ---
 
@@ -573,8 +581,8 @@ Mark applied
 3. Q1/RB items should be called raw jobs or scored candidates, not packets.
 4. The final word "packet" should mean generated CV PDF plus metadata.
 5. A database-backed scored backlog is probably simpler than a literal in-memory ring buffer.
-6. CV reframing should happen after block selection, not before.
-7. Reframing should be attempted only on selected blocks.
-8. Fitting should try spacing/font/bullet pruning before full block removal.
+6. Canonical CV blocks may be selected, excluded, and reordered, but never rewritten.
+7. Fitting may adjust bounded layout settings and remove only the lowest-value optional block.
+8. Generated prose, rewrite acceptance gates, and truth-checking generated text are rejected.
 9. Every generated packet should have a manifest.
 10. Every failure should be visible and retryable where possible.

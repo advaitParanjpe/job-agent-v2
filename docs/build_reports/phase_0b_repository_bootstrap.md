@@ -143,7 +143,8 @@ High-confidence candidates from the audit:
 - Work authorization guardrails.
 - Truth-bank extraction, canonicalization, validation, and repair ideas.
 - Structured scoring and CV selection schemas.
-- Tailoring proposal/truth-check schemas and deterministic edit policy.
+- Generated-prose tailoring/truth-check schemas were later rejected by ADR-001; the
+  canonical-content roadmap replaces them with deterministic selection and fitting.
 - LaTeX escaping, rendering, page count, fit, prune, and manifest primitives.
 - Local path and artifact key safety checks.
 
