@@ -381,7 +381,7 @@ Important limitations:
 - Packaging and one-command local startup remain future release-hardening work.
 
 ### End-to-end release hardening
-Status: active.
+Status: complete.
 
 Goal:
 - Make the local capture-to-reviewed-packet workflow easier to validate and
@@ -396,6 +396,42 @@ Potential scope:
   credentials.
 - Migration/backup notes for local SQLite data.
 - CI-equivalent command documentation around `python3 scripts/check.py`.
+
+Delivered:
+- Set release-candidate version metadata to `v0.1.0`.
+- Added release configuration helpers, preflight diagnostics, and database
+  schema inspection.
+- Added `./scripts/dev-up` / `scripts/dev_up.py` for local API, workers, and
+  frontend startup with preflight and child-process shutdown.
+- Added `scripts/release_smoke.py` for an isolated deterministic flow through
+  Q1, Q2, review resolution, reviewed regeneration, packet versioning, and
+  worker status.
+- Added `scripts/demo_seed.py` with synthetic demo jobs in a separate demo
+  database by default.
+- Repaired migration ordering for older packet schemas before creating the
+  regeneration idempotency index.
+- Replaced stale README phase language with release-candidate setup, startup,
+  smoke, worker, review, privacy, and troubleshooting guidance.
+- Added `docs/release_checklist.md` and `CHANGELOG.md`.
+
+Validation evidence:
+- `PYTHONPATH=backend/src pytest backend/tests/unit/test_release_hardening.py -q`:
+  7 passed.
+- `python3 scripts/release_smoke.py`: passed.
+- `python3 scripts/demo_seed.py --db-path /tmp/jobagent-demo-seed.sqlite3 --artifact-root /tmp/jobagent-demo-artifacts`:
+  created 7 synthetic jobs.
+- `PYTHONPATH=backend/src python3 -m jobagent_v2.preflight --json --skip-port-check`:
+  passed.
+- `python3 scripts/check.py`: 191 backend tests passed, 2 local TeX compile
+  tests skipped, plus frontend and extension checks.
+- `git diff --check`: passed.
+
+Important limitations:
+- `python3 -m build` could not be run in the current environment because the
+  `build` module was not installed before this milestone; `build>=1.2` is now
+  included in the dev extra for clean release environments.
+- The release remains local-first and owner-scoped; production authentication,
+  hosted deployment, and multi-user hardening remain out of scope.
 
 ### Deterministic one-page validation and fitting
 Status: not started.
@@ -420,7 +456,7 @@ Potential scope:
 - Family and section-order visibility.
 
 ### Release readiness
-Status: future.
+Status: superseded by `job-agent-v2 v0.1.0` release-candidate hardening.
 
 Goal:
 - Make a clean local install/run experience.

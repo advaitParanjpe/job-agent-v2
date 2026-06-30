@@ -10,7 +10,7 @@ class AppMetadata(TypedDict):
 
 
 APP_NAME: Final[str] = "jobagent-v2"
-BOOTSTRAP_PHASE: Final[str] = "phase-5"
+BOOTSTRAP_PHASE: Final[str] = "release-v0.1.0"
 
 
 def create_app_metadata() -> AppMetadata:

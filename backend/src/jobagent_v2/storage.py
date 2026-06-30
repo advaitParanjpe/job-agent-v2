@@ -74,6 +74,12 @@ class Repository:
 
     def initialize(self) -> None:
         with self.connect() as connection:
+            existing_version = _existing_schema_version(connection)
+            if existing_version is not None and existing_version > SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"database schema {existing_version} is newer than supported "
+                    f"schema {SCHEMA_VERSION}"
+                )
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -253,9 +259,6 @@ class Repository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_packets_job_created
                 ON packets(job_id, created_at DESC);
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_packets_regen_idempotency
-                ON packets(idempotency_key)
-                WHERE idempotency_key IS NOT NULL AND status = 'ready';
 
                 CREATE TABLE IF NOT EXISTS job_tailoring_decisions (
                     id TEXT PRIMARY KEY,
@@ -409,6 +412,11 @@ class Repository:
                 ("schema_version", str(SCHEMA_VERSION)),
             )
             self._ensure_columns(connection)
+            connection.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_packets_regen_idempotency
+                ON packets(idempotency_key)
+                WHERE idempotency_key IS NOT NULL AND status = 'ready'"""
+            )
 
     def _ensure_columns(self, connection: sqlite3.Connection) -> None:
         rows = connection.execute("PRAGMA table_info(jobs)").fetchall()
@@ -492,6 +500,19 @@ class Repository:
         for name, ddl in resolution_columns.items():
             if name not in resolution_existing:
                 connection.execute(f"ALTER TABLE review_resolutions ADD COLUMN {name} {ddl}")
+        regen_rows = connection.execute("PRAGMA table_info(review_regeneration_jobs)").fetchall()
+        regen_existing = {row["name"] for row in regen_rows}
+        regen_columns = {
+            "generated_packet_id": "TEXT",
+            "idempotency_key": "TEXT",
+            "policy_version": "TEXT",
+            "registry_version": "TEXT",
+            "classifier_version": "TEXT",
+            "packet_generator_version": "TEXT",
+        }
+        for name, ddl in regen_columns.items():
+            if name not in regen_existing:
+                connection.execute(f"ALTER TABLE review_regeneration_jobs ADD COLUMN {name} {ddl}")
 
     def register_worker_instance(
         self,
@@ -2983,6 +3004,23 @@ def _safe_failure_reason(reason: str) -> str:
     text = str(reason).replace("\n", " ").strip()
     text = re.sub(r"(/[^\s]+)+", "[path]", text)
     return text[:300] or "Review regeneration failed."
+
+
+def _existing_schema_version(connection: sqlite3.Connection) -> int | None:
+    table = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_meta'"
+    ).fetchone()
+    if table is None:
+        return None
+    row = connection.execute(
+        "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        return int(row["value"])
+    except (TypeError, ValueError):
+        raise RuntimeError("database schema version is invalid") from None
 
 
 def _queue_counts(

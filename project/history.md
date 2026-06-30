@@ -458,6 +458,60 @@ Important limitations:
   arbitrary worker processes.
 - Packaging and one-command startup remain future release-hardening work.
 
+### End-to-End Release Hardening
+Completion date: 2026-06-30.
+
+Relevant commit:
+- Not committed at the time of this audit.
+
+Main functionality delivered:
+- Defined `job-agent-v2 v0.1.0` as the release candidate across Python,
+  frontend, extension, and release docs.
+- Added `jobagent_v2.config` for local runtime defaults and environment
+  overrides with safe credential redaction.
+- Added `jobagent_v2.preflight` to validate Python packages, writable
+  directories, canonical master CVs, project-block registry, classifier and
+  tailoring config, database schema, frontend/extension files, ports, and
+  LaTeX availability.
+- Added `jobagent_v2.db_status` for schema inspection and initialization.
+- Added `./scripts/dev-up` and `scripts/dev_up.py` to start API, continuous
+  workers, and frontend with preflight, clear service URLs, and child-process
+  shutdown.
+- Added `scripts/release_smoke.py` to run an isolated end-to-end workflow
+  through Q1, Q2, manual review, reviewed regeneration, packet versioning,
+  worker status, and prior-packet preservation.
+- Added `scripts/demo_seed.py` with seven synthetic demo jobs in a separate
+  demo database by default.
+- Repaired migration ordering so older packet tables gain `idempotency_key`
+  before the regeneration idempotency index is created.
+- Replaced stale README phase language with a release-candidate entry point.
+- Added `docs/release_checklist.md` and `CHANGELOG.md`.
+
+Validation evidence:
+- `PYTHONPATH=backend/src pytest backend/tests/unit/test_release_hardening.py -q`:
+  7 passed.
+- `python3 scripts/release_smoke.py`: passed using an isolated temporary
+  database and artifact root.
+- `python3 scripts/demo_seed.py --db-path /tmp/jobagent-demo-seed.sqlite3 --artifact-root /tmp/jobagent-demo-artifacts`:
+  created 7 synthetic jobs.
+- `PYTHONPATH=backend/src python3 -m jobagent_v2.preflight --json --skip-port-check`:
+  passed.
+- `python3 scripts/check.py`: 191 backend tests passed, 2 local TeX compile
+  tests skipped, plus frontend and extension checks.
+- `git diff --check`: passed.
+- `git status --short`: inspected.
+- Final diff was inspected for secrets, PII, raw job descriptions, generated
+  artifacts, accidental CV edits, and unrelated changes.
+
+Important limitations:
+- `python3 -m build` was attempted but the active environment did not have the
+  `build` module installed. The dev extra now includes `build>=1.2` for clean
+  release environments.
+- Preflight can validate and initialize/migrate a configured local database;
+  tests and smoke flows use isolated databases.
+- This remains a local-first release candidate, not a hosted multi-user
+  production service.
+
 ## Major architectural decisions
 
 ### Canonical CV Tailoring

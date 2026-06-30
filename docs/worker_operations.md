@@ -16,6 +16,18 @@ authoritative in SQLite.
 
 ## Startup Commands
 
+Release preflight:
+
+```bash
+PYTHONPATH=backend/src python3 -m jobagent_v2.preflight
+```
+
+API, all workers, and frontend together:
+
+```bash
+./scripts/dev-up
+```
+
 API only:
 
 ```bash
