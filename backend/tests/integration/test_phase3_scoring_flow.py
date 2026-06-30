@@ -29,10 +29,17 @@ def test_q1_persists_score_diagnostics_and_restart(
 
     assert processed is not None and processed["intake_status"] == "scored"
     assert processed["overall_score"] is not None
-    assert processed["selected_cv_family"] == "hardware_rtl"
+    assert processed["selected_cv_family"] == "digital_ic"
     assert service.get_score(str(created["job_id"]))["score"] is not None
     assert len(service.get_block_scores(str(created["job_id"]))["block_scores"]) == 2
     assert service.get_job(str(created["job_id"]))["job"]["strengths"]
+    classification = repository.get_family_classification(str(created["job_id"]))
+    assert classification is not None
+    assert classification["selected_family"] == "digital_ic"
+    assert classification["family_scores"]["digital_ic"] > classification["family_scores"]["ml"]
+    assert processed["family_classification"]["classifier_version"]
+    stored = service.get_job(str(created["job_id"]))["job"]
+    assert processed["overall_score"] == stored["overall_score"]
 
 
 def test_dashboard_list_sorts_by_score_and_rescore_replaces_blocks(
@@ -61,3 +68,30 @@ technical communication are required for this software engineering role.
     assert rescored["intake_status"] == "scored"
     assert len(service.get_block_scores(str(higher["job_id"]))["block_scores"]) == 2
     assert service.get_job(str(lower["job_id"]))["job"]["scoring_status"] == "complete"
+
+
+def test_low_confidence_family_review_flag_persists(
+    service: JobService, repository: Repository
+) -> None:
+    created = service.create_job(scoring_payload(
+        "https://example.com/product-manager",
+        "Product Manager - Acme",
+        """Product Manager
+Location: Remote
+Responsibilities
+Own roadmap planning, stakeholder communication, sales enablement, and launch planning.
+Qualifications
+Experience with business strategy, pricing, and executive presentations.
+""",
+    ))
+
+    processed = DummyQ1Worker(repository).process_next()
+
+    assert processed is not None and processed["intake_status"] == "scored"
+    assert processed["family_classification"]["decision"] == "low_confidence"
+    assert processed["family_classification_requires_review"] is True
+    classification = repository.get_family_classification(str(created["job_id"]))
+    assert classification is not None
+    assert classification["requires_review"] is True
+    assert classification["decision"] == "low_confidence"
+    assert processed["overall_score"] is not None

@@ -1,4 +1,4 @@
-"""Small schema helpers for the Phase 1 API contract."""
+"""Small schema helpers for the local API contract."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 
 class ValidationError(ValueError):
-    """Raised when a request payload does not match the Phase 1 contract."""
+    """Raised when a request payload does not match the local API contract."""
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,39 @@ def parse_capture_payload(payload: Any) -> CapturePayload:
         captured_at=captured_at,
         evidence=_optional_object(data, "evidence"),
     )
+
+
+def parse_review_resolution_payload(payload: Any) -> dict[str, Any]:
+    data = require_object(payload)
+    action = _required_string(data, "action")
+    reviewer_id = _required_string(data, "reviewer_id")
+    parsed: dict[str, Any] = {
+        "action": action,
+        "reviewer_id": reviewer_id,
+    }
+    for key in (
+        "review_note",
+        "resolved_family",
+        "removed_block",
+        "inserted_block",
+    ):
+        value = data.get(key)
+        if value is not None:
+            if not isinstance(value, str):
+                raise ValidationError(f"{key} must be a string")
+            parsed[key] = value.strip()
+    return parsed
+
+
+def parse_review_creation_payload(payload: Any) -> dict[str, str]:
+    data = require_object(payload)
+    review_type = str(data.get("review_type") or "classification").strip()
+    if review_type not in {"classification", "tailoring"}:
+        raise ValidationError("review_type must be 'classification' or 'tailoring'")
+    reason = str(data.get("reason") or "manual_review_requested").strip()
+    if not reason:
+        raise ValidationError("reason is required")
+    return {"review_type": review_type, "reason": reason}
 
 
 def _required_string(data: dict[str, Any], key: str) -> str:

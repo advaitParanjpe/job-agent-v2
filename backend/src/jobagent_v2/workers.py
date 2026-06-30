@@ -12,16 +12,20 @@ from jobagent_v2.scoring import ScoringConfigurationError
 from jobagent_v2.storage import Repository
 from jobagent_v2.packets import (
     PacketGenerationError,
+    build_master_packet_artifacts,
     build_selected_cv,
     compile_pdf,
+    family_master_cv,
     render_latex,
     safe_artifact_directory,
     write_json,
 )
+from jobagent_v2.scoring import load_cv_families
+from jobagent_v2.tailoring import evaluate_tailoring
 from jobagent_v2.util import utc_now_iso
 
 
-class DummyQ1Worker:
+class Queue1Worker:
     def __init__(self, repository: Repository) -> None:
         self.repository = repository
 
@@ -133,7 +137,7 @@ class DummyQ1Worker:
         return final_job
 
 
-class DummyQ2Worker:
+class Queue2Worker:
     def __init__(
         self,
         repository: Repository,
@@ -162,19 +166,69 @@ class DummyQ2Worker:
         try:
             directory = safe_artifact_directory(self.artifact_root, str(job["id"]), packet_id)
             directory.mkdir(parents=True, exist_ok=True)
-            selected = build_selected_cv(
-                packet_id=packet_id, job=job,
-                block_scores=self.repository.list_block_scores(str(job["id"])),
-            )
-            tex = render_latex(selected)
-            tex_path = directory / "cv.tex"
-            tex_path.write_text(tex, encoding="utf-8")
+            if not job.get("selected_cv_family") or not job.get("scoring_version"):
+                raise PacketGenerationError(
+                    "validate_inputs", "job is missing validated scoring inputs"
+                )
+            family = _selected_family(job)
+            if family_master_cv(family):
+                master_artifacts = build_master_packet_artifacts(
+                    packet_id=packet_id, job=job, family=family, output_dir=directory
+                )
+                tailoring = evaluate_tailoring(
+                    packet_id=packet_id,
+                    job=job,
+                    output_dir=directory,
+                    master_tex_path=master_artifacts.tex_path,
+                    master_pdf_path=master_artifacts.pdf_path,
+                )
+                if tailoring.used_tailored_output:
+                    tex_path = tailoring.tex_path or master_artifacts.tex_path
+                    pdf_path = tailoring.pdf_path or master_artifacts.pdf_path
+                    compile_log = tailoring.compile_log
+                    page_count = tailoring.page_count
+                    source = "approved_master_cv_with_one_block_tailoring"
+                    immutable = False
+                else:
+                    tex_path = master_artifacts.tex_path
+                    pdf_path = master_artifacts.pdf_path
+                    compile_log = tailoring.compile_log
+                    page_count = master_artifacts.page_count
+                    source = "approved_master_cv"
+                    immutable = True
+                selected_dict = master_artifacts.selected_cv
+                selected_dict.update({
+                    "source": source,
+                    "immutable": immutable,
+                    "tailoring": tailoring.decision,
+                    "project_blocks": {
+                        "base_blocks": tailoring.decision.get("base_blocks", []),
+                        "final_blocks": tailoring.decision.get("final_order", []),
+                        "removed_block": tailoring.decision.get("removed_block"),
+                        "inserted_block": tailoring.decision.get("inserted_block"),
+                    },
+                })
+                tailoring_path = directory / "tailoring_decision.json"
+                write_json(tailoring_path, tailoring.decision)
+                self.repository.save_tailoring_decision(
+                    str(job["id"]), packet_id, tailoring.decision
+                )
+            else:
+                selected = build_selected_cv(
+                    packet_id=packet_id, job=job,
+                    block_scores=self.repository.list_block_scores(str(job["id"])),
+                )
+                tex = render_latex(selected)
+                tex_path = directory / "cv.tex"
+                tex_path.write_text(tex, encoding="utf-8")
+                pdf_path, compile_log, page_count = compile_pdf(tex, directory)
+                selected_dict = selected.to_dict()
+                tailoring_path = None
             selected_path = directory / "selected_cv.json"
-            write_json(selected_path, selected.to_dict())
-            pdf_path, compile_log, page_count = compile_pdf(tex, directory)
+            write_json(selected_path, selected_dict)
             (directory / "compile.log").write_text(compile_log, encoding="utf-8")
             manifest = self._manifest(
-                task, job, packet_id, selected.to_dict(), directory, page_count, None
+                task, job, packet_id, selected_dict, directory, page_count, None
             )
             manifest_path = directory / "manifest.json"
             write_json(manifest_path, manifest)
@@ -183,6 +237,7 @@ class DummyQ2Worker:
                 pdf_path=str(pdf_path), tex_path=str(tex_path),
                 selected_cv_path=str(selected_path), manifest_path=str(manifest_path),
                 page_count=page_count,
+                tailoring_decision_path=str(tailoring_path) if tailoring_path else None,
             )
         except PacketGenerationError as error:
             self._write_failure_manifest(
@@ -205,7 +260,11 @@ class DummyQ2Worker:
             "directory": str(directory), "pdf": str(directory / "cv.pdf"),
             "tex": str(directory / "cv.tex"), "selected_cv": str(directory / "selected_cv.json"),
         }
+        if selected.get("tailoring"):
+            paths["tailoring_decision"] = str(directory / "tailoring_decision.json")
         selected_records = selected.get("selection_records", [])
+        master_cv = selected.get("master_cv")
+        tailoring = selected.get("tailoring")
         return {
             "manifest_version": "phase5-manifest-v1", "packet_id": packet_id,
             "job_id": job["id"], "q2_task_id": task["id"], "company": job["company"],
@@ -219,6 +278,9 @@ class DummyQ2Worker:
             "excluded_blocks": [item for item in selected_records if not item["selected"]],
             "section_order": selected.get("section_order"),
             "selected_skills": selected.get("skill_selection"),
+            "master_cv": master_cv,
+            "tailoring": tailoring,
+            "immutable": bool(selected.get("immutable")),
             "score_at_generation": job.get("overall_score"), "generated_at": utc_now_iso(),
             "artifact_paths": paths,
             "page_count": page_count,
@@ -236,3 +298,16 @@ class DummyQ2Worker:
             write_json(directory / "manifest.json", manifest)
         except OSError:
             return
+
+
+def _selected_family(job: dict[str, object]) -> dict[str, object]:
+    family_id = str(job.get("selected_cv_family") or "")
+    for family in load_cv_families():
+        if str(family["id"]) == family_id:
+            return family
+    raise PacketGenerationError("load_cv_family", f"unknown selected CV family: {family_id}")
+
+
+# Backward-compatible aliases for existing tests and local scripts.
+DummyQ1Worker = Queue1Worker
+DummyQ2Worker = Queue2Worker

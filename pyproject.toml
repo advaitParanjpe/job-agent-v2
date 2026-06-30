@@ -9,6 +9,7 @@ description = "Local-only JobAgent V2 bootstrap"
 requires-python = ">=3.11"
 dependencies = [
   "openai>=2.34,<3",
+  "pypdf>=6,<7",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +21,14 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["backend/src"]
+
+[tool.setuptools.package-data]
+jobagent_v2 = [
+  "data/*.json",
+  "data/evaluation/*.json",
+  "data/truth_banks/*.json",
+  "templates/*.tex",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]

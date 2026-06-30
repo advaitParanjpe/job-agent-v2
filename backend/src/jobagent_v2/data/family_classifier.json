@@ -1,0 +1,147 @@
+{
+  "config_version": "phase-b-family-classifier-config-v1",
+  "classifier_version": "phase-b-family-classifier-v1",
+  "families": ["digital_ic", "verification", "software", "ml"],
+  "combination": {
+    "deterministic_weight": 0.6,
+    "semantic_weight": 0.4
+  },
+  "decision_thresholds": {
+    "clear_min_score": 0.65,
+    "clear_min_margin": 0.25,
+    "close_max_margin": 0.12,
+    "low_confidence_max_score": 0.40,
+    "hybrid_min_margin": 0.13
+  },
+  "section_weights": {
+    "title": 3.0,
+    "responsibility": 2.2,
+    "qualification": 1.4,
+    "domain": 1.1,
+    "tool": 0.7
+  },
+  "signals": {
+    "digital_ic": {
+      "title": [
+        "rtl design", "rtl engineer", "asic design", "asic engineer",
+        "digital design", "front-end design", "logic design",
+        "microarchitecture", "hardware design", "fpga design"
+      ],
+      "responsibility": [
+        "rtl design", "implement rtl", "write rtl", "asic design",
+        "digital logic", "microarchitecture", "datapath", "pipeline",
+        "timing closure", "synthesis", "sta", "ppa", "fpga prototyping",
+        "cpu", "gpu hardware", "npu", "accelerator", "cache",
+        "coherence", "interconnect", "axi", "apb", "amba"
+      ],
+      "qualification": [
+        "rtl", "asic", "digital design", "computer architecture",
+        "logic design", "synthesis", "timing", "fpga", "systemverilog",
+        "verilog", "vhdl"
+      ],
+      "domain": [
+        "semiconductor", "silicon", "soc", "processor", "accelerator",
+        "hardware", "chip"
+      ],
+      "tool": [
+        "systemverilog", "verilog", "vhdl", "fpga", "vivado",
+        "design compiler", "primetime", "python performance modelling"
+      ],
+      "negative": [
+        "analog ic", "rf circuit", "board design", "layout engineer"
+      ]
+    },
+    "verification": {
+      "title": [
+        "design verification", "verification engineer", "soc verification",
+        "pre-silicon verification", "formal verification", "validation engineer"
+      ],
+      "responsibility": [
+        "design verification", "soc verification", "pre-silicon verification",
+        "uvm", "testbench", "constrained-random", "functional coverage",
+        "scoreboard", "reference model", "test plan", "regression",
+        "waveform debugging", "protocol checker", "formal verification",
+        "emulation", "assertions", "sva", "verify rtl",
+        "python infrastructure for uvm", "regression triage"
+      ],
+      "qualification": [
+        "uvm", "sva", "systemverilog assertions", "coverage",
+        "testbench", "verification methodology", "formal", "emulation",
+        "protocol verification"
+      ],
+      "domain": [
+        "soc", "silicon", "semiconductor", "protocol", "rtl"
+      ],
+      "tool": [
+        "uvm", "sva", "systemverilog", "verdi", "questa", "vcs",
+        "python", "perl", "tcl", "coverage"
+      ],
+      "negative": [
+        "analog validation", "post-silicon validation only"
+      ]
+    },
+    "software": {
+      "title": [
+        "software engineer", "backend engineer", "full stack engineer",
+        "full-stack engineer", "infrastructure engineer", "platform engineer",
+        "developer tools engineer", "systems engineer", "runtime engineer",
+        "inference runtime engineer"
+      ],
+      "responsibility": [
+        "backend api", "backend apis", "distributed systems", "databases",
+        "data pipelines", "developer tools", "infrastructure", "cloud",
+        "microservices", "api design", "production systems", "ci/cd",
+        "asynchronous systems", "performance optimization", "testing",
+        "build backend", "build apis", "full stack", "frontend",
+        "service reliability", "inference runtime", "runtime system"
+      ],
+      "qualification": [
+        "python", "c++", "java", "go", "typescript", "sql",
+        "distributed systems", "database", "cloud", "kubernetes",
+        "docker", "apis", "testing"
+      ],
+      "domain": [
+        "saas", "cloud", "platform", "backend", "infrastructure",
+        "developer productivity"
+      ],
+      "tool": [
+        "python", "c++", "java", "go", "typescript", "javascript",
+        "react", "sql", "postgres", "aws", "gcp", "azure",
+        "docker", "kubernetes", "linux"
+      ],
+      "negative": [
+        "project manager", "product manager", "business development"
+      ]
+    },
+    "ml": {
+      "title": [
+        "machine learning engineer", "ml engineer", "applied ml engineer",
+        "applied ai engineer", "deep learning engineer", "ai engineer"
+      ],
+      "responsibility": [
+        "machine learning", "model training", "train models",
+        "deep learning", "inference", "model deployment", "model evaluation",
+        "quantization", "pruning", "feature engineering",
+        "ml infrastructure", "computer vision", "nlp", "speech models",
+        "large language models", "llm", "recommendation models",
+        "deploy models", "evaluate models"
+      ],
+      "qualification": [
+        "machine learning", "deep learning", "pytorch", "tensorflow",
+        "model training", "inference", "nlp", "computer vision",
+        "speech", "quantization", "evaluation"
+      ],
+      "domain": [
+        "ai", "ml", "machine learning", "model", "llm",
+        "computer vision", "speech"
+      ],
+      "tool": [
+        "pytorch", "tensorflow", "jax", "scikit-learn", "cuda",
+        "hugging face", "mlflow", "python"
+      ],
+      "negative": [
+        "backend apis for ai product", "ai product manager"
+      ]
+    }
+  }
+}

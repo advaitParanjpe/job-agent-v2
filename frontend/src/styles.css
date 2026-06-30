@@ -4,6 +4,122 @@ body {
   margin: 24px;
 }
 
+main {
+  max-width: 1440px;
+}
+
+.review-section {
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  margin: 0 0 24px;
+  padding: 16px;
+}
+
+.section-heading h2,
+.section-heading p {
+  margin: 0 0 8px;
+}
+
+.review-filters {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.review-filters label,
+.review-actions label {
+  display: grid;
+  font-size: 14px;
+  gap: 4px;
+}
+
+select,
+textarea,
+button {
+  font: inherit;
+}
+
+button:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 3px solid #2f80ed;
+  outline-offset: 2px;
+}
+
+.status-line,
+.help-text,
+.empty-state {
+  color: #52606d;
+}
+
+.review-cards {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.review-card,
+.review-detail {
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.review-card h3,
+.review-detail h3,
+.review-subsection h4 {
+  margin-top: 0;
+}
+
+.review-subsection {
+  border-top: 1px solid #d9e2ec;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.score-bars {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.score-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(180px, 1fr) minmax(120px, 2fr) minmax(84px, auto);
+}
+
+.score-bar {
+  background: #eef2f7;
+  border: 1px solid #d9e2ec;
+  display: block;
+  height: 14px;
+}
+
+.score-fill {
+  background: #2f80ed;
+  display: block;
+  height: 100%;
+}
+
+.immutable-notice {
+  background: #f5f7fa;
+  border-left: 4px solid #7b8794;
+  margin: 16px 0;
+  padding: 10px;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 table {
   border-collapse: collapse;
   width: 100%;
@@ -19,4 +135,14 @@ td {
 
 button {
   margin-right: 6px;
+}
+
+@media (max-width: 720px) {
+  body {
+    margin: 12px;
+  }
+
+  .score-row {
+    grid-template-columns: 1fr;
+  }
 }

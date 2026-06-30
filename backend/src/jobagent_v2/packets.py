@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from jobagent_v2.master_cvs import MASTER_CV_ROOT, discover_master_cvs
 from jobagent_v2.scoring import ScoringConfigurationError, load_cv_families, load_truth_bank
 
 
@@ -61,6 +62,14 @@ class SelectedCV:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class MasterPacketArtifacts:
+    selected_cv: dict[str, Any]
+    tex_path: Path
+    pdf_path: Path
+    page_count: int
+
+
 def safe_artifact_directory(root: Path | str, job_id: str, packet_id: str) -> Path:
     valid = re.fullmatch(r"[A-Za-z0-9-]+", job_id) and re.fullmatch(
         r"[A-Za-z0-9-]+", packet_id
@@ -74,6 +83,57 @@ def safe_artifact_directory(root: Path | str, job_id: str, packet_id: str) -> Pa
     if base not in target.parents:
         raise PacketGenerationError("artifact_path", "packet artifact path escapes configured root")
     return target
+
+
+def family_master_cv(family: dict[str, Any]) -> dict[str, Any] | None:
+    master = family.get("master_cv")
+    if not isinstance(master, dict) or not master.get("approved"):
+        return None
+    return master
+
+
+def build_master_packet_artifacts(
+    *,
+    packet_id: str,
+    job: dict[str, Any],
+    family: dict[str, Any],
+    output_dir: Path,
+) -> MasterPacketArtifacts:
+    family_id = str(job.get("selected_cv_family") or "")
+    records = {record.family_id: record for record in discover_master_cvs(MASTER_CV_ROOT)}
+    record = records.get(family_id)
+    if record is None:
+        raise PacketGenerationError("load_master_cv", f"unknown master CV family: {family_id}")
+    master = family_master_cv(family)
+    if master is None:
+        raise PacketGenerationError(
+            "load_master_cv", f"family is not master-registered: {family_id}"
+        )
+    tex_path = output_dir / "cv.tex"
+    pdf_path = output_dir / "cv.pdf"
+    shutil.copy2(record.tex_path, tex_path)
+    shutil.copy2(record.pdf_path, pdf_path)
+    selected = {
+        "packet_id": packet_id,
+        "job_id": str(job["id"]),
+        "cv_family": family_id,
+        "cv_family_version": str(family["version"]),
+        "truth_bank_version": None,
+        "scoring_version": str(job.get("scoring_version") or ""),
+        "source": "approved_master_cv",
+        "master_cv": record.to_dict(),
+        "immutable": True,
+        "immutable_sections": record.immutable_sections,
+        "dynamic_skills_allowed": False,
+        "selection_records": [],
+        "section_order": ["approved_master_pdf"],
+        "skill_selection": {
+            "source": "approved_master_cv",
+            "dynamic_rewrite": False,
+            "reason": "Skills are fixed in the approved master CV.",
+        },
+    }
+    return MasterPacketArtifacts(selected, tex_path, pdf_path, record.pdf_page_count)
 
 
 def latex_escape(value: str) -> str:

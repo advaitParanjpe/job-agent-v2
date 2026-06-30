@@ -1,4 +1,7 @@
-# Phase 3 API
+# JobAgent V2 Local API
+
+This document covers the current local API through intake, scoring, promotion,
+and Phase 5 packet generation. The filename is historical.
 
 Base URL for local development:
 
@@ -291,7 +294,7 @@ Response:
 
 ## `POST /api/workers/q2/run-once`
 
-Claims one persistent Q2 task, then runs dummy artifact output through:
+Claims one persistent Q2 task, then runs packet generation through:
 
 ```text
 queued -> generating -> ready

@@ -1,0 +1,81 @@
+\documentclass[10pt,letterpaper]{article}
+\usepackage[margin=0.45in]{geometry}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{setspace}
+\setstretch{1.07}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\tabcolsep}{0pt}
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\titlespacing*{\section}{0pt}{6pt}{4pt}
+\newcommand{\resumeItem}[1]{\item #1}
+\newcommand{\resumeExpHeading}[3]{\begin{tabularx}{\textwidth}{X r}\textbf{#1} $\mid$ \textit{#2} & #3 \\\end{tabularx}\vspace{0pt}}
+\newcommand{\resumeEduHeading}[3]{\begin{tabularx}{\textwidth}{X r}\textbf{#1} $\mid$ \textit{#2} & #3 \\\end{tabularx}\vspace{0pt}}
+\newcommand{\resumeProjectHeading}[3]{\begin{tabularx}{\textwidth}{X r}\textbf{#1} \textit{#2} & #3 \\\end{tabularx}\vspace{0pt}}
+\newenvironment{resumeItemList}{\begin{small}\begin{itemize}[leftmargin=*, itemsep=2pt, topsep=3pt, parsep=0pt]}{\end{itemize}\end{small}\vspace{4pt}}
+\begin{document}
+\begin{tabularx}{\textwidth}{@{}X r@{}}
+{\fontsize{18}{28}\selectfont \textbf{Advait Paranjpe}} & \href{mailto:advait_paranjpe@outlook.com}{Email: advait\_paranjpe@outlook.com} \\[-1pt]
+\href{https://github.com/AdvaitParanjpe}{GitHub: github.com/AdvaitParanjpe} & Mobile: +1 (213) 284-9936 \\[-1pt]
+\href{https://linkedin.com/in/advait-paranjpe}{LinkedIn: linkedin.com/in/advait-paranjpe} & \href{https://advaitparanjpe.com}{Website: advaitparanjpe.com}
+\end{tabularx}
+\vspace{3pt}
+\section*{Education}
+\resumeEduHeading{University of California, Los Angeles}{M.S. in Electrical and Computer Engineering}{Sep 2025 -- Dec 2026}
+\begin{resumeItemList}
+\resumeItem{Coursework: CPU/GPU Architecture, Memory Systems, Cache Coherence, Interconnect Design.}
+\resumeItem{GPA: 3.7/4.0}
+\end{resumeItemList}
+\resumeEduHeading{The University of Manchester}{B.Eng. in Electrical and Electronic Engineering}{Sep 2022 -- Jul 2025}
+\begin{resumeItemList}
+\resumeItem{Dissertation: ``Cascaded PLL Microwave Synthesizer for 5G systems.''}
+\resumeItem{\textbf{First Class Honours} -- highest UK degree classification.}
+\end{resumeItemList}
+\section*{Experience}
+\resumeExpHeading{Jaguar Land Rover North America}{Incoming Semiconductor Applications Engineering Intern}{Jul 2026 -- Sep 2026}
+\resumeExpHeading{VAST Lab, UCLA}{Student Researcher -- GPU/FPGA Acceleration}{Jan 2026 -- Mar 2026}
+\begin{resumeItemList}
+\resumeItem{Profiled ROCm attention kernels and memory bottlenecks to identify FPGA acceleration opportunities for Engram LLM inference.}
+\resumeItem{Modeled FPGA cache architectures, increasing projected hit rate from $\sim$5\% at 256 entries to $\sim$48\% with a 64k-entry, 4-way design.}
+\resumeItem{Translated workload profiling into FPGA tradeoffs across cache capacity, lookup throughput, locality, and on-chip memory usage.}
+\end{resumeItemList}
+\resumeExpHeading{NESO / National Grid ESO}{Software Engineering Intern (two summers)}{Jul 2024 -- Sep 2025}
+\begin{resumeItemList}
+\resumeItem{Re-architected a 100k+ LOC simulation engine through vectorization and pipeline optimization, cutting runtime by 10x.}
+\resumeItem{Optimized 100M+ records through chunked, memory-efficient execution, cutting RAM from 32 GB to 16 GB and runtime by 11x.}
+\resumeItem{Reduced CPU context-switching overhead through parallel API batching and staged processing, increasing throughput by 24x for time-sensitive market telemetry.}
+\end{resumeItemList}
+\section*{Projects}
+\resumeProjectHeading{JobAgent}{$\mid$ Full-Stack Job Application Platform (FastAPI, React, SQLAlchemy)}{May 2026 -- Jun 2026}
+\begin{resumeItemList}
+\resumeItem{Piloted JobAgent with 10 beta users across 200 scored jobs and 500 generated CV packets, using feedback to refine job capture, scoring, and application workflows.}
+\resumeItem{Built a FastAPI/SQLAlchemy platform with async packet generation, duplicate-run protection, progress polling, signed-token authentication, user isolation, quotas, and artifact validation.}
+\resumeItem{Shipped a Chrome MV3 extension and React tracker for job capture, scoring, PDF preview/download, and status updates, backed by 192 automated pytest cases covering core workflows and security controls.}
+\end{resumeItemList}
+\resumeProjectHeading{Agentic RTL Security Discovery}{$\mid$ Simulation and Test Automation Tooling (Python, SystemVerilog)}{May 2026}
+\begin{resumeItemList}
+\resumeItem{Built a Python/Icarus Verilog harness that executes generated MMIO traces against clean and bug-enabled RTL with oracle-gated validation.}
+\resumeItem{Implemented an agentic loop for planning, generating, simulating, observing, refining, minimizing, and reporting verification tests.}
+\resumeItem{Compared deterministic regression, random fuzzing, and LLM-assisted discovery across bug detection, reproducibility, and manual effort.}
+\end{resumeItemList}
+\resumeProjectHeading{SparrowML}{$\mid$ ML Compiler and Runtime Toolchain (Python, C, PyTorch)}{May 2026 -- Jun 2026}
+\begin{resumeItemList}
+\resumeItem{Built a modular pipeline for model training, INT8 quantization, tensor serialization, C runtime generation, and deterministic target packaging.}
+\resumeItem{Generated code, packed tensor layouts, and workloads for scalar, dense-vector, sparse-vector, and multicore RISC-V execution.}
+\resumeItem{Added reproducible evaluation and benchmarking across prediction quality, cycles, memory traffic, vector utilization, and multicore scaling.}
+\end{resumeItemList}
+\vspace{-0.5em}
+\section*{Skills}
+\begin{resumeItemList}
+\resumeItem{\textbf{Languages:} Python, C++, C, SQL, Bash, JavaScript, TypeScript, MATLAB, SystemVerilog.}
+\resumeItem{\textbf{Backend and Full Stack:} FastAPI, SQLAlchemy, REST APIs, React, Chrome MV3, asynchronous workflows, data pipelines, and PDF generation.}
+\resumeItem{\textbf{Engineering Tools:} pytest, Git, Linux, Docker, CI/CD, profiling, multiprocessing, NumPy, Pandas, and HIP/ROCm.}
+\end{resumeItemList}
+\end{document}

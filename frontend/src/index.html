@@ -10,6 +10,48 @@
     <main>
       <h1>JobAgent V2</h1>
       <p><button id="process-intake-queue" type="button">Process intake queue</button></p>
+      <section aria-labelledby="reviews-heading" class="review-section">
+        <div class="section-heading">
+          <h2 id="reviews-heading">Review queue</h2>
+          <p>Review family and project decisions before treating packet changes as final.</p>
+        </div>
+        <form id="review-filters" class="review-filters">
+          <label>
+            Status
+            <select id="review-status-filter" name="status">
+              <option value="pending">Pending</option>
+              <option value="">All</option>
+              <option value="approved">Approved</option>
+              <option value="overridden">Overridden</option>
+              <option value="rejected">Rejected</option>
+              <option value="deferred">Deferred</option>
+              <option value="regeneration_failed">Regeneration failed</option>
+            </select>
+          </label>
+          <label>
+            Type
+            <select id="review-type-filter" name="review_type">
+              <option value="">All</option>
+              <option value="classification">Classification</option>
+              <option value="tailoring">Tailoring</option>
+            </select>
+          </label>
+          <label>
+            Family
+            <select id="review-family-filter" name="family">
+              <option value="">All</option>
+              <option value="digital_ic">Digital IC / RTL</option>
+              <option value="verification">Verification / SoC Verification</option>
+              <option value="software">Software Engineering</option>
+              <option value="ml">Machine Learning Engineering</option>
+            </select>
+          </label>
+          <button type="submit">Apply filters</button>
+        </form>
+        <div id="reviews-status" class="status-line" role="status"></div>
+        <div id="reviews-list" class="review-list"></div>
+        <div id="review-detail" class="review-detail"></div>
+      </section>
       <table id="jobs-table">
         <thead>
           <tr>

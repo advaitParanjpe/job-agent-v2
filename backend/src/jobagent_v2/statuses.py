@@ -1,4 +1,4 @@
-"""Status values and validated transitions for the Phase 1 queue skeleton."""
+"""Status values and validated transitions for the local workflow."""
 
 from __future__ import annotations
 

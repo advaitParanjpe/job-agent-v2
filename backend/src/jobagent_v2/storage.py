@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
@@ -14,11 +15,21 @@ from jobagent_v2.statuses import (
     validate_intake_transition,
     validate_packet_transition,
 )
+from jobagent_v2.project_blocks import (
+    ProjectBlockRegistryError,
+    load_project_block_registry,
+    validate_replacement_pair,
+)
 from jobagent_v2.url_utils import normalize_url, source_site_from_url
 from jobagent_v2.util import utc_now_iso
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 10
+REGENERATION_MAX_ATTEMPTS = 3
+REGENERATION_RETRYABLE_ERRORS = {
+    "temporary_artifact_write_failure",
+    "worker_interrupted",
+}
 
 
 class JobNotFoundError(LookupError):
@@ -27,6 +38,26 @@ class JobNotFoundError(LookupError):
 
 class DuplicateActivePacketError(RuntimeError):
     """Raised when a packet task is already active or ready."""
+
+
+FAMILY_IDS = {"digital_ic", "verification", "software", "ml"}
+REVIEWABLE_CLASSIFICATION_DECISIONS = {"close_match", "hybrid_match", "low_confidence"}
+REVIEWABLE_TAILORING_STATUSES = {
+    "review_required",
+    "fallback_to_master",
+    "tailoring_rejected",
+}
+REVIEW_ACTIONS = {
+    "approve_classification",
+    "override_family",
+    "mark_out_of_scope",
+    "defer",
+    "approve_tailoring",
+    "use_master_unchanged",
+    "select_approved_replacement",
+    "approve_order",
+    "reject_tailoring",
+}
 
 
 class Repository:
@@ -54,6 +85,7 @@ class Repository:
                     id TEXT PRIMARY KEY,
                     source_url TEXT NOT NULL,
                     normalized_url TEXT NOT NULL UNIQUE,
+                    owner_id TEXT NOT NULL DEFAULT 'local',
                     page_title TEXT NOT NULL,
                     raw_visible_text TEXT NOT NULL,
                     source_site TEXT,
@@ -156,6 +188,24 @@ class Repository:
                     created_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS job_family_classifications (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    classifier_version TEXT NOT NULL,
+                    config_version TEXT NOT NULL,
+                    family_scores_json TEXT NOT NULL,
+                    selected_family TEXT NOT NULL,
+                    secondary_family TEXT,
+                    confidence REAL NOT NULL,
+                    decision TEXT NOT NULL,
+                    requires_review INTEGER NOT NULL,
+                    rule_evidence_json TEXT NOT NULL,
+                    semantic_evidence_json TEXT NOT NULL,
+                    deterministic_scores_json TEXT NOT NULL,
+                    semantic_scores_json TEXT,
+                    created_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS q2_tasks (
                     id TEXT PRIMARY KEY,
                     job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
@@ -187,15 +237,130 @@ class Repository:
                     tex_path TEXT,
                     manifest_path TEXT,
                     selected_cv_path TEXT,
+                    tailoring_decision_path TEXT,
                     page_count INTEGER,
                     failure_stage TEXT,
                     failure_reason TEXT,
+                    generation_kind TEXT NOT NULL DEFAULT 'automated',
+                    source_packet_id TEXT REFERENCES packets(id) ON DELETE SET NULL,
+                    review_id TEXT REFERENCES review_items(id) ON DELETE SET NULL,
+                    review_resolution_id TEXT REFERENCES review_resolutions(id) ON DELETE SET NULL,
+                    idempotency_key TEXT,
+                    generation_reason TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     completed_at TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_packets_job_created
                 ON packets(job_id, created_at DESC);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_packets_regen_idempotency
+                ON packets(idempotency_key)
+                WHERE idempotency_key IS NOT NULL AND status = 'ready';
+
+                CREATE TABLE IF NOT EXISTS job_tailoring_decisions (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    packet_id TEXT REFERENCES packets(id) ON DELETE CASCADE,
+                    base_family TEXT NOT NULL,
+                    classification_decision TEXT,
+                    base_blocks_json TEXT NOT NULL,
+                    final_blocks_json TEXT NOT NULL,
+                    removed_block TEXT,
+                    inserted_block TEXT,
+                    scores_json TEXT NOT NULL,
+                    replacement_gain REAL NOT NULL,
+                    evidence_json TEXT NOT NULL,
+                    requires_review INTEGER NOT NULL,
+                    tailoring_status TEXT NOT NULL,
+                    fallback_reason TEXT,
+                    policy_version TEXT NOT NULL,
+                    registry_version TEXT NOT NULL,
+                    classifier_version TEXT NOT NULL,
+                    decision_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_tailoring_job_created
+                ON job_tailoring_decisions(job_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS review_items (
+                    id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    packet_id TEXT REFERENCES packets(id) ON DELETE SET NULL,
+                    review_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    classification_ref_id TEXT,
+                    tailoring_ref_id TEXT,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    resolved_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_reviews_status_owner
+                ON review_items(owner_id, status, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS review_resolutions (
+                    id TEXT PRIMARY KEY,
+                    review_id TEXT NOT NULL REFERENCES review_items(id) ON DELETE CASCADE,
+                    owner_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    packet_id TEXT REFERENCES packets(id) ON DELETE SET NULL,
+                    action TEXT NOT NULL,
+                    reviewer_id TEXT NOT NULL,
+                    review_note TEXT,
+                    original_family TEXT,
+                    resolved_family TEXT,
+                    original_blocks_json TEXT NOT NULL,
+                    resolved_blocks_json TEXT NOT NULL,
+                    resolution_json TEXT NOT NULL,
+                    classifier_version TEXT,
+                    registry_version TEXT,
+                    policy_version TEXT,
+                    regeneration_status TEXT NOT NULL,
+                    regeneration_packet_id TEXT,
+                    regeneration_job_id TEXT,
+                    source_packet_id TEXT,
+                    queued_at TEXT,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    failed_at TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    failure_code TEXT,
+                    failure_reason TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_review_resolutions_review
+                ON review_resolutions(review_id, created_at ASC);
+
+                CREATE TABLE IF NOT EXISTS review_regeneration_jobs (
+                    id TEXT PRIMARY KEY,
+                    review_resolution_id TEXT NOT NULL UNIQUE
+                        REFERENCES review_resolutions(id) ON DELETE CASCADE,
+                    review_id TEXT NOT NULL REFERENCES review_items(id) ON DELETE CASCADE,
+                    owner_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    source_packet_id TEXT REFERENCES packets(id) ON DELETE SET NULL,
+                    generated_packet_id TEXT REFERENCES packets(id) ON DELETE SET NULL,
+                    idempotency_key TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT,
+                    queued_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    failed_at TEXT,
+                    failure_code TEXT,
+                    failure_reason TEXT,
+                    policy_version TEXT,
+                    registry_version TEXT,
+                    classifier_version TEXT,
+                    packet_generator_version TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_review_regen_status
+                ON review_regeneration_jobs(status, queued_at ASC);
                 """
             )
             connection.execute(
@@ -208,6 +373,7 @@ class Repository:
         rows = connection.execute("PRAGMA table_info(jobs)").fetchall()
         existing = {row["name"] for row in rows}
         columns = {
+            "owner_id": "TEXT NOT NULL DEFAULT 'local'",
             "duplicate_key": "TEXT",
             "capture_evidence_json": "TEXT",
             "detected_site": "TEXT",
@@ -231,6 +397,10 @@ class Repository:
             "secondary_cv_family": "TEXT",
             "cv_family_confidence": "TEXT",
             "cv_family_selection_json": "TEXT",
+            "family_classification_json": "TEXT",
+            "family_classifier_version": "TEXT",
+            "family_classification_decision": "TEXT",
+            "family_classification_requires_review": "INTEGER NOT NULL DEFAULT 0",
             "scoring_status": "TEXT",
             "scoring_version": "TEXT",
             "score_breakdown_json": "TEXT",
@@ -251,6 +421,36 @@ class Repository:
         for name, ddl in columns.items():
             if name not in existing:
                 connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {ddl}")
+        packet_rows = connection.execute("PRAGMA table_info(packets)").fetchall()
+        packet_existing = {row["name"] for row in packet_rows}
+        if "tailoring_decision_path" not in packet_existing:
+            connection.execute("ALTER TABLE packets ADD COLUMN tailoring_decision_path TEXT")
+        packet_columns = {
+            "generation_kind": "TEXT NOT NULL DEFAULT 'automated'",
+            "source_packet_id": "TEXT",
+            "review_id": "TEXT",
+            "review_resolution_id": "TEXT",
+            "idempotency_key": "TEXT",
+            "generation_reason": "TEXT",
+        }
+        for name, ddl in packet_columns.items():
+            if name not in packet_existing:
+                connection.execute(f"ALTER TABLE packets ADD COLUMN {name} {ddl}")
+        resolution_rows = connection.execute("PRAGMA table_info(review_resolutions)").fetchall()
+        resolution_existing = {row["name"] for row in resolution_rows}
+        resolution_columns = {
+            "regeneration_job_id": "TEXT",
+            "source_packet_id": "TEXT",
+            "queued_at": "TEXT",
+            "started_at": "TEXT",
+            "completed_at": "TEXT",
+            "failed_at": "TEXT",
+            "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+            "failure_code": "TEXT",
+        }
+        for name, ddl in resolution_columns.items():
+            if name not in resolution_existing:
+                connection.execute(f"ALTER TABLE review_resolutions ADD COLUMN {name} {ddl}")
 
     def create_or_get_job(self, payload: CapturePayload) -> tuple[dict[str, Any], bool]:
         normalized_url = normalize_url(payload.url)
@@ -276,19 +476,20 @@ class Repository:
             connection.execute(
                 """
                 INSERT INTO jobs (
-                    id, source_url, normalized_url, page_title, raw_visible_text,
+                    id, source_url, normalized_url, owner_id, page_title, raw_visible_text,
                     source_site, capture_evidence_json, detected_site, duplicate_key,
                     company, title, role_family, overall_score,
                     recommendation, reason, intake_status, packet_status,
                     manual_priority, placeholder_artifact_path, archived_at,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
                     payload.url,
                     normalized_url,
+                    str(payload.evidence.get("owner_id") or "local"),
                     payload.page_title,
                     payload.visible_text,
                     site,
@@ -316,7 +517,7 @@ class Repository:
                 event_type="job_created",
                 from_status=None,
                 to_status="queued",
-                message="Raw job persisted and queued for dummy Q1.",
+                message="Raw job persisted and queued for Queue 1 intake/scoring.",
                 metadata={
                     "normalized_url": normalized_url,
                     "captured_at": payload.captured_at,
@@ -463,6 +664,15 @@ class Repository:
             ).fetchone()
         return row_to_packet(row) if row else None
 
+    def get_latest_ready_packet_for_job(self, job_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM packets WHERE job_id = ? AND status = 'ready' "
+                "ORDER BY completed_at DESC, created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+        return row_to_packet(row) if row else None
+
     def create_packet_attempt(self, task_id: str, job_id: str) -> dict[str, Any]:
         now = utc_now_iso()
         packet_id = str(uuid4())
@@ -481,10 +691,59 @@ class Repository:
             raise RuntimeError("packet attempt did not persist")
         return row_to_packet(row)
 
+    def create_review_packet_attempt(
+        self,
+        *,
+        job_id: str,
+        q2_task_id: str,
+        source_packet_id: str,
+        review_id: str,
+        review_resolution_id: str,
+        idempotency_key: str,
+        selected_cv_family: str,
+        generation_reason: str,
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        packet_id = str(uuid4())
+        with self.connect() as connection:
+            existing = connection.execute(
+                "SELECT * FROM packets WHERE idempotency_key = ? AND status = 'ready'",
+                (idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                return row_to_packet(existing)
+            connection.execute(
+                """INSERT INTO packets (
+                    id, job_id, q2_task_id, status, selected_cv_family,
+                    generation_kind, source_packet_id, review_id, review_resolution_id,
+                    idempotency_key, generation_reason, created_at, updated_at
+                )
+                VALUES (?, ?, ?, 'generating', ?, 'review_regeneration', ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    packet_id,
+                    job_id,
+                    q2_task_id,
+                    selected_cv_family,
+                    source_packet_id,
+                    review_id,
+                    review_resolution_id,
+                    idempotency_key,
+                    generation_reason,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM packets WHERE id = ?", (packet_id,)
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("review packet attempt did not persist")
+        return row_to_packet(row)
+
     def complete_packet_attempt(
         self, task_id: str, packet_id: str, *, artifact_directory: str,
         pdf_path: str, tex_path: str, selected_cv_path: str, manifest_path: str,
-        page_count: int | None,
+        page_count: int | None, tailoring_decision_path: str | None = None,
     ) -> dict[str, Any]:
         now = utc_now_iso()
         with self.connect() as connection:
@@ -495,10 +754,11 @@ class Repository:
                 raise ValueError("only running Q2 tasks can complete a packet")
             connection.execute(
                 """UPDATE packets SET status='ready', artifact_directory=?, pdf_path=?,
-                tex_path=?, selected_cv_path=?, manifest_path=?, page_count=?,
+                tex_path=?, selected_cv_path=?, manifest_path=?, tailoring_decision_path=?,
+                page_count=?,
                 updated_at=?, completed_at=? WHERE id=?""",
                 (artifact_directory, pdf_path, tex_path, selected_cv_path, manifest_path,
-                 page_count, now, now, packet_id),
+                 tailoring_decision_path, page_count, now, now, packet_id),
             )
             connection.execute(
                 """UPDATE q2_tasks SET status='ready', completed_at=?, lease_owner=NULL,
@@ -521,6 +781,612 @@ class Repository:
                 "SELECT * FROM packets WHERE id = ?", (packet_id,)
             ).fetchone()
         return row_to_packet(row)
+
+    def complete_review_packet_attempt(
+        self,
+        *,
+        packet_id: str,
+        artifact_directory: str,
+        pdf_path: str,
+        tex_path: str,
+        selected_cv_path: str,
+        manifest_path: str,
+        page_count: int | None,
+        tailoring_decision_path: str | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE packets SET status='ready', artifact_directory=?, pdf_path=?,
+                tex_path=?, selected_cv_path=?, manifest_path=?, tailoring_decision_path=?,
+                page_count=?, updated_at=?, completed_at=? WHERE id=?""",
+                (
+                    artifact_directory,
+                    pdf_path,
+                    tex_path,
+                    selected_cv_path,
+                    manifest_path,
+                    tailoring_decision_path,
+                    page_count,
+                    now,
+                    now,
+                    packet_id,
+                ),
+            )
+            packet = connection.execute(
+                "SELECT * FROM packets WHERE id = ?", (packet_id,)
+            ).fetchone()
+        return row_to_packet(packet)
+
+    def save_tailoring_decision(
+        self,
+        job_id: str,
+        packet_id: str,
+        decision: dict[str, Any],
+    ) -> None:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            job = self._get_job_row(connection, job_id)
+            tailoring_id = str(uuid4())
+            connection.execute(
+                """INSERT INTO job_tailoring_decisions (
+                id, job_id, packet_id, base_family, classification_decision,
+                base_blocks_json, final_blocks_json, removed_block, inserted_block,
+                scores_json, replacement_gain, evidence_json, requires_review,
+                tailoring_status, fallback_reason, policy_version, registry_version,
+                classifier_version, decision_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    tailoring_id,
+                    job_id,
+                    packet_id,
+                    decision["base_family"],
+                    decision.get("classification_decision"),
+                    json.dumps(decision.get("base_blocks", []), sort_keys=True),
+                    json.dumps(decision.get("final_order", []), sort_keys=True),
+                    decision.get("removed_block"),
+                    decision.get("inserted_block"),
+                    json.dumps({
+                        "base_block_scores": decision.get("base_block_scores", []),
+                        "candidate_blocks": decision.get("candidate_blocks", []),
+                    }, sort_keys=True),
+                    float(decision.get("replacement_gain") or 0.0),
+                    json.dumps(decision.get("job_evidence", []), sort_keys=True),
+                    int(bool(decision.get("requires_review"))),
+                    decision["tailoring_status"],
+                    decision.get("fallback_reason"),
+                    decision["policy_version"],
+                    decision["registry_version"],
+                    decision["classifier_version"],
+                    json.dumps(decision, sort_keys=True),
+                    now,
+                ),
+            )
+            if _tailoring_needs_review(decision):
+                self._ensure_pending_review(
+                    connection,
+                    owner_id=job["owner_id"],
+                    job_id=job_id,
+                    packet_id=packet_id,
+                    review_type="tailoring",
+                    classification_ref_id=None,
+                    tailoring_ref_id=tailoring_id,
+                    reason=f"tailoring_status:{decision['tailoring_status']}",
+                )
+
+    def get_tailoring_decision(self, job_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM job_tailoring_decisions "
+                "WHERE job_id = ? ORDER BY created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+        return row_to_tailoring_decision(row) if row else None
+
+    def list_reviews(
+        self,
+        *,
+        owner_id: str = "local",
+        status: str | None = None,
+        review_type: str | None = None,
+        family: str | None = None,
+        job_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses = ["r.owner_id = ?"]
+        params: list[Any] = [owner_id]
+        if status:
+            clauses.append("r.status = ?")
+            params.append(status)
+        if review_type:
+            clauses.append("r.review_type = ?")
+            params.append(review_type)
+        if job_id:
+            clauses.append("r.job_id = ?")
+            params.append(job_id)
+        if family:
+            clauses.append(
+                "(c.selected_family = ? OR t.base_family = ? OR j.selected_cv_family = ?)"
+            )
+            params.extend([family, family, family])
+        where = " AND ".join(clauses)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT r.*, j.title AS job_title, j.company AS job_company,
+                       j.selected_cv_family AS job_selected_family,
+                       c.selected_family AS classification_family,
+                       c.decision AS classification_decision,
+                       c.requires_review AS classification_requires_review,
+                       t.tailoring_status AS tailoring_status,
+                       t.requires_review AS tailoring_requires_review
+                FROM review_items r
+                JOIN jobs j ON j.id = r.job_id
+                LEFT JOIN job_family_classifications c ON c.id = r.classification_ref_id
+                LEFT JOIN job_tailoring_decisions t ON t.id = r.tailoring_ref_id
+                WHERE {where}
+                ORDER BY r.created_at DESC
+                """,
+                tuple(params),
+            ).fetchall()
+        return [row_to_review_summary(row) for row in rows]
+
+    def get_review(self, review_id: str, *, owner_id: str = "local") -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM review_items WHERE id = ? AND owner_id = ?",
+                (review_id, owner_id),
+            ).fetchone()
+            if row is None:
+                raise JobNotFoundError(review_id)
+            return self._review_detail(connection, row)
+
+    def create_manual_review(
+        self,
+        job_id: str,
+        *,
+        owner_id: str = "local",
+        review_type: str = "classification",
+        reason: str = "manual_review_requested",
+    ) -> dict[str, Any]:
+        with self.connect() as connection:
+            job = self._get_job_row(connection, job_id)
+            if job["owner_id"] != owner_id:
+                raise JobNotFoundError(job_id)
+            classification_ref_id = None
+            tailoring_ref_id = None
+            packet_id = None
+            if review_type == "classification":
+                row = connection.execute(
+                    "SELECT id FROM job_family_classifications WHERE job_id = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (job_id,),
+                ).fetchone()
+                classification_ref_id = str(row["id"]) if row else None
+            elif review_type == "tailoring":
+                row = connection.execute(
+                    "SELECT id, packet_id FROM job_tailoring_decisions WHERE job_id = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (job_id,),
+                ).fetchone()
+                if row is not None:
+                    tailoring_ref_id = str(row["id"])
+                    packet_id = row["packet_id"]
+            else:
+                raise ValueError("unknown review type")
+            review_id = self._ensure_pending_review(
+                connection,
+                owner_id=owner_id,
+                job_id=job_id,
+                packet_id=packet_id,
+                review_type=review_type,
+                classification_ref_id=classification_ref_id,
+                tailoring_ref_id=tailoring_ref_id,
+                reason=reason,
+            )
+            row = connection.execute(
+                "SELECT * FROM review_items WHERE id = ?",
+                (review_id,),
+            ).fetchone()
+            return self._review_detail(connection, row)
+
+    def resolve_review(
+        self,
+        review_id: str,
+        resolution: dict[str, Any],
+        *,
+        owner_id: str = "local",
+    ) -> dict[str, Any]:
+        action = str(resolution.get("action") or "")
+        reviewer_id = str(resolution.get("reviewer_id") or "").strip()
+        if action not in REVIEW_ACTIONS:
+            raise ValueError("unknown review action")
+        if not reviewer_id:
+            raise ValueError("reviewer_id is required")
+        note = resolution.get("review_note")
+        if note is not None and not isinstance(note, str):
+            raise ValueError("review_note must be a string")
+        with self.connect() as connection:
+            review = connection.execute(
+                "SELECT * FROM review_items WHERE id = ? AND owner_id = ?",
+                (review_id, owner_id),
+            ).fetchone()
+            if review is None:
+                raise JobNotFoundError(review_id)
+            detail = self._review_detail(connection, review)
+            resolved = self._validate_review_resolution(detail, resolution)
+            now = utc_now_iso()
+            resolution_id = str(uuid4())
+            connection.execute(
+                """
+                INSERT INTO review_resolutions (
+                    id, review_id, owner_id, job_id, packet_id, action, reviewer_id,
+                    review_note, original_family, resolved_family, original_blocks_json,
+                    resolved_blocks_json, resolution_json, classifier_version,
+                    registry_version, policy_version, regeneration_status,
+                    regeneration_packet_id, regeneration_job_id, source_packet_id,
+                    queued_at, failure_reason, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    resolution_id,
+                    review_id,
+                    owner_id,
+                    detail["job_id"],
+                    detail.get("packet_id"),
+                    action,
+                    reviewer_id,
+                    note,
+                    resolved["original_family"],
+                    resolved["resolved_family"],
+                    json.dumps(resolved["original_blocks"], sort_keys=True),
+                    json.dumps(resolved["resolved_blocks"], sort_keys=True),
+                    json.dumps(resolved, sort_keys=True),
+                    resolved["classifier_version"],
+                    resolved["registry_version"],
+                    resolved["policy_version"],
+                    resolved["regeneration_status"],
+                    None,
+                    None,
+                    detail.get("packet_id"),
+                    now if resolved["regeneration_status"] == "queued" else None,
+                    resolved.get("failure_reason"),
+                    now,
+                ),
+            )
+            if resolved["regeneration_status"] == "queued":
+                source_packet_id = detail.get("packet_id")
+                if source_packet_id is None:
+                    latest = connection.execute(
+                        "SELECT id FROM packets WHERE job_id = ? AND status = 'ready' "
+                        "ORDER BY completed_at DESC, created_at DESC LIMIT 1",
+                        (detail["job_id"],),
+                    ).fetchone()
+                    source_packet_id = latest["id"] if latest else None
+                key = _regeneration_idempotency_key(
+                    resolution_id=resolution_id,
+                    resolved_family=resolved["resolved_family"],
+                    resolved_blocks=resolved["resolved_blocks"],
+                    registry_version=resolved["registry_version"],
+                    policy_version=resolved["policy_version"],
+                )
+                job_id = str(uuid4())
+                connection.execute(
+                    """INSERT INTO review_regeneration_jobs (
+                        id, review_resolution_id, review_id, owner_id, job_id,
+                        source_packet_id, idempotency_key, status, queued_at,
+                        policy_version, registry_version, classifier_version,
+                        packet_generator_version, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        job_id,
+                        resolution_id,
+                        review_id,
+                        owner_id,
+                        detail["job_id"],
+                        source_packet_id,
+                        key,
+                        now,
+                        resolved["policy_version"],
+                        resolved["registry_version"],
+                        resolved["classifier_version"],
+                        "phase-h-review-regeneration-v1",
+                        now,
+                        now,
+                    ),
+                )
+                connection.execute(
+                    """UPDATE review_resolutions SET regeneration_job_id = ?,
+                    source_packet_id = ?, queued_at = ? WHERE id = ?""",
+                    (job_id, source_packet_id, now, resolution_id),
+                )
+            connection.execute(
+                """
+                UPDATE review_items
+                SET status = ?, updated_at = ?, resolved_at = ?
+                WHERE id = ?
+                """,
+                (resolved["review_status"], now, now, review_id),
+            )
+            self._insert_event(
+                connection,
+                job_id=detail["job_id"],
+                event_type="review_resolved",
+                from_status=detail["status"],
+                to_status=resolved["review_status"],
+                message=f"Review {action} recorded.",
+                metadata={
+                    "review_id": review_id,
+                    "resolution_id": resolution_id,
+                    "regeneration_status": resolved["regeneration_status"],
+                },
+            )
+            updated = connection.execute(
+                "SELECT * FROM review_items WHERE id = ?",
+                (review_id,),
+            ).fetchone()
+            return self._review_detail(connection, updated)
+
+    def export_review_feedback(self, *, owner_id: str = "local") -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT rr.*, ri.review_type, ri.reason, c.decision AS original_decision
+                FROM review_resolutions rr
+                JOIN review_items ri ON ri.id = rr.review_id
+                LEFT JOIN job_family_classifications c ON c.id = ri.classification_ref_id
+                WHERE rr.owner_id = ?
+                ORDER BY rr.created_at ASC
+                """,
+                (owner_id,),
+            ).fetchall()
+        feedback = []
+        for row in rows:
+            resolution = json.loads(row["resolution_json"])
+            feedback.append({
+                "job_id": row["job_id"],
+                "review_id": row["review_id"],
+                "review_type": row["review_type"],
+                "original_family": row["original_family"],
+                "reviewed_family": row["resolved_family"],
+                "original_decision": row["original_decision"],
+                "review_action": row["action"],
+                "original_blocks": json.loads(row["original_blocks_json"]),
+                "reviewed_blocks": json.loads(row["resolved_blocks_json"]),
+                "review_note": row["review_note"],
+                "eligible_for_calibration": bool(resolution.get("eligible_for_calibration", True)),
+            })
+        return feedback
+
+    def claim_next_regeneration_job(
+        self,
+        *,
+        owner: str,
+        lease_expires_at: str,
+        max_attempts: int = REGENERATION_MAX_ATTEMPTS,
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT * FROM review_regeneration_jobs
+                WHERE status = 'queued' AND attempt_count < ?
+                ORDER BY queued_at ASC LIMIT 1""",
+                (max_attempts,),
+            ).fetchone()
+            if row is None:
+                return None
+            now = utc_now_iso()
+            connection.execute(
+                """UPDATE review_regeneration_jobs
+                SET status='processing', lease_owner=?, lease_expires_at=?,
+                    attempt_count=attempt_count + 1, started_at=COALESCE(started_at, ?),
+                    updated_at=?
+                WHERE id=? AND status='queued'""",
+                (owner, lease_expires_at, now, now, row["id"]),
+            )
+            claimed = connection.execute(
+                "SELECT * FROM review_regeneration_jobs WHERE id = ?", (row["id"],)
+            ).fetchone()
+            if claimed is None or claimed["status"] != "processing":
+                return None
+            connection.execute(
+                """UPDATE review_resolutions
+                SET regeneration_status='processing', started_at=COALESCE(started_at, ?),
+                    attempt_count=?
+                WHERE id=?""",
+                (now, claimed["attempt_count"], claimed["review_resolution_id"]),
+            )
+            self._insert_event(
+                connection,
+                job_id=claimed["job_id"],
+                event_type="review_regeneration_claimed",
+                from_status="queued",
+                to_status="processing",
+                message="Review packet regeneration job claimed.",
+                metadata={
+                    "regeneration_job_id": claimed["id"],
+                    "resolution_id": claimed["review_resolution_id"],
+                    "owner": owner,
+                },
+            )
+        return row_to_regeneration_job(claimed)
+
+    def get_regeneration_job(self, regeneration_job_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM review_regeneration_jobs WHERE id = ?",
+                (regeneration_job_id,),
+            ).fetchone()
+        if row is None:
+            raise JobNotFoundError(regeneration_job_id)
+        return row_to_regeneration_job(row)
+
+    def get_review_resolution(self, resolution_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM review_resolutions WHERE id = ?", (resolution_id,)
+            ).fetchone()
+        if row is None:
+            raise JobNotFoundError(resolution_id)
+        return row_to_review_resolution(row)
+
+    def complete_regeneration_job(self, regeneration_job_id: str, packet_id: str) -> None:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM review_regeneration_jobs WHERE id = ?",
+                (regeneration_job_id,),
+            ).fetchone()
+            if row is None:
+                raise JobNotFoundError(regeneration_job_id)
+            connection.execute(
+                """UPDATE review_regeneration_jobs
+                SET status='complete', generated_packet_id=?, completed_at=?,
+                    lease_owner=NULL, lease_expires_at=NULL, failure_code=NULL,
+                    failure_reason=NULL, updated_at=?
+                WHERE id=?""",
+                (packet_id, now, now, regeneration_job_id),
+            )
+            connection.execute(
+                """UPDATE review_resolutions
+                SET regeneration_status='complete', regeneration_packet_id=?,
+                    completed_at=?, failure_code=NULL, failure_reason=NULL,
+                    attempt_count=?
+                WHERE id=?""",
+                (
+                    packet_id,
+                    now,
+                    row["attempt_count"],
+                    row["review_resolution_id"],
+                ),
+            )
+            connection.execute(
+                "UPDATE review_items SET status='approved', updated_at=? WHERE id=?",
+                (now, row["review_id"]),
+            )
+            self._update_job(connection, row["job_id"], {"current_packet_id": packet_id})
+            self._insert_event(
+                connection,
+                job_id=row["job_id"],
+                event_type="review_regeneration_complete",
+                from_status="processing",
+                to_status="complete",
+                message="Reviewed packet regeneration completed.",
+                metadata={
+                    "regeneration_job_id": regeneration_job_id,
+                    "resolution_id": row["review_resolution_id"],
+                    "packet_id": packet_id,
+                    "source_packet_id": row["source_packet_id"],
+                },
+            )
+
+    def fail_regeneration_job(
+        self,
+        regeneration_job_id: str,
+        *,
+        code: str,
+        reason: str,
+        retryable: bool = False,
+        max_attempts: int = REGENERATION_MAX_ATTEMPTS,
+    ) -> None:
+        now = utc_now_iso()
+        safe_reason = _safe_failure_reason(reason)
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM review_regeneration_jobs WHERE id = ?",
+                (regeneration_job_id,),
+            ).fetchone()
+            if row is None:
+                raise JobNotFoundError(regeneration_job_id)
+            should_retry = retryable and int(row["attempt_count"]) < max_attempts
+            status = "queued" if should_retry else "failed"
+            connection.execute(
+                """UPDATE review_regeneration_jobs
+                SET status=?, lease_owner=NULL, lease_expires_at=NULL,
+                    failed_at=CASE WHEN ? = 'failed' THEN ? ELSE failed_at END,
+                    failure_code=?, failure_reason=?, updated_at=?
+                WHERE id=?""",
+                (status, status, now, code, safe_reason, now, regeneration_job_id),
+            )
+            connection.execute(
+                """UPDATE review_resolutions
+                SET regeneration_status=?,
+                    failed_at=CASE WHEN ? = 'failed' THEN ? ELSE failed_at END,
+                    failure_code=?, failure_reason=?, attempt_count=?
+                WHERE id=?""",
+                (
+                    status,
+                    status,
+                    now,
+                    code,
+                    safe_reason,
+                    row["attempt_count"],
+                    row["review_resolution_id"],
+                ),
+            )
+            if status == "failed":
+                connection.execute(
+                    "UPDATE review_items SET status='regeneration_failed', updated_at=? WHERE id=?",
+                    (now, row["review_id"]),
+                )
+            self._insert_event(
+                connection,
+                job_id=row["job_id"],
+                event_type="review_regeneration_failed",
+                from_status="processing",
+                to_status=status,
+                message="Reviewed packet regeneration failed.",
+                metadata={
+                    "regeneration_job_id": regeneration_job_id,
+                    "resolution_id": row["review_resolution_id"],
+                    "failure_code": code,
+                    "retry_queued": should_retry,
+                },
+            )
+
+    def recover_stale_regeneration_jobs(
+        self,
+        *,
+        now: str,
+        max_attempts: int = REGENERATION_MAX_ATTEMPTS,
+    ) -> int:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM review_regeneration_jobs
+                WHERE status = 'processing' AND lease_expires_at IS NOT NULL
+                  AND lease_expires_at < ?""",
+                (now,),
+            ).fetchall()
+            for row in rows:
+                retry = int(row["attempt_count"]) < max_attempts
+                status = "queued" if retry else "failed"
+                failed_at = None if retry else now
+                connection.execute(
+                    """UPDATE review_regeneration_jobs
+                    SET status=?, lease_owner=NULL, lease_expires_at=NULL,
+                        failed_at=COALESCE(?, failed_at), failure_code='worker_interrupted',
+                        failure_reason='Worker lease expired before completion.',
+                        updated_at=? WHERE id=?""",
+                    (status, failed_at, now, row["id"]),
+                )
+                connection.execute(
+                    """UPDATE review_resolutions
+                    SET regeneration_status=?, failed_at=COALESCE(?, failed_at),
+                        failure_code='worker_interrupted',
+                        failure_reason='Worker lease expired before completion.',
+                        attempt_count=? WHERE id=?""",
+                    (status, failed_at, row["attempt_count"], row["review_resolution_id"]),
+                )
+                self._insert_event(
+                    connection,
+                    job_id=row["job_id"],
+                    event_type="review_regeneration_stale_recovered",
+                    from_status="processing",
+                    to_status=status,
+                    message="Expired review-regeneration lease was recovered.",
+                    metadata={"regeneration_job_id": row["id"], "requeued": retry},
+                )
+        return len(rows)
 
     def fail_packet_attempt(
         self, task_id: str, packet_id: str, *, stage: str, reason: str
@@ -645,7 +1511,7 @@ class Repository:
                 {
                     "packet_status": "queued",
                     "promotion_reason": promotion_reason,
-                    "reason": "Queued for dummy Q2 processing.",
+                    "reason": "Queued for Queue 2 packet generation.",
                 },
             )
             self._insert_event(
@@ -699,7 +1565,7 @@ class Repository:
                 event_type="q2_task_claimed",
                 from_status="queued",
                 to_status="claimed",
-                message="Dummy Q2 worker claimed persistent task.",
+                message="Queue 2 worker claimed persistent task.",
                 metadata={"task_id": row["id"], "owner": owner},
             )
         return row_to_q2_task(claimed) if claimed else None
@@ -727,7 +1593,7 @@ class Repository:
                 event_type="q2_task_running",
                 from_status="claimed",
                 to_status="running",
-                message="Dummy Q2 task started placeholder generation.",
+                message="Queue 2 task started packet generation.",
                 metadata={"task_id": task_id},
             )
             updated = connection.execute(
@@ -761,11 +1627,11 @@ class Repository:
                 event_type="q2_task_ready",
                 from_status="running",
                 to_status="ready",
-                message="Dummy Q2 completed placeholder artifact.",
+                message="Queue 2 completed legacy placeholder artifact.",
                 metadata={
                     "task_id": task_id,
                     "artifact_path": artifact_path,
-                    "dummy": True,
+                    "legacy_placeholder": True,
                 },
             )
             updated = connection.execute(
@@ -943,6 +1809,53 @@ class Repository:
                     now,
                 ),
             )
+            classification = getattr(result, "family_classification", {}) or {}
+            if classification:
+                connection.execute(
+                    "DELETE FROM job_family_classifications WHERE job_id = ?", (job_id,)
+                )
+                classification_id = str(uuid4())
+                connection.execute(
+                    """INSERT INTO job_family_classifications (
+                    id, job_id, classifier_version, config_version, family_scores_json,
+                    selected_family, secondary_family, confidence, decision, requires_review,
+                    rule_evidence_json, semantic_evidence_json, deterministic_scores_json,
+                    semantic_scores_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        classification_id,
+                        job_id,
+                        classification["classifier_version"],
+                        classification["config_version"],
+                        json.dumps(classification["family_scores"], sort_keys=True),
+                        classification["selected_family"],
+                        classification.get("secondary_family"),
+                        float(classification["confidence"]),
+                        classification["decision"],
+                        int(bool(classification["requires_review"])),
+                        json.dumps(classification["rule_evidence"], sort_keys=True),
+                        json.dumps(classification["semantic_evidence"], sort_keys=True),
+                        json.dumps(
+                            classification["deterministic_scores"], sort_keys=True
+                        ),
+                        json.dumps(classification["semantic_scores"], sort_keys=True)
+                        if classification.get("semantic_scores") is not None
+                        else None,
+                        now,
+                    ),
+                )
+                if _classification_needs_review(classification):
+                    job = self._get_job_row(connection, job_id)
+                    self._ensure_pending_review(
+                        connection,
+                        owner_id=job["owner_id"],
+                        job_id=job_id,
+                        packet_id=None,
+                        review_type="classification",
+                        classification_ref_id=classification_id,
+                        tailoring_ref_id=None,
+                        reason=f"classification_decision:{classification['decision']}",
+                    )
             connection.execute(
                 """INSERT INTO job_scores (
                 id, job_id, scoring_version, structured_jd_json, family_selection_json,
@@ -965,6 +1878,20 @@ class Repository:
                 "secondary_cv_family": result.selection["secondary_family"],
                 "cv_family_confidence": result.selection["confidence"],
                 "cv_family_selection_json": json.dumps(result.selection, sort_keys=True),
+                "family_classification_json": json.dumps(classification, sort_keys=True)
+                if classification
+                else None,
+                "family_classifier_version": classification.get("classifier_version")
+                if classification
+                else None,
+                "family_classification_decision": classification.get("decision")
+                if classification
+                else None,
+                "family_classification_requires_review": int(
+                    bool(classification.get("requires_review"))
+                )
+                if classification
+                else 0,
                 "scoring_status": "complete",
                 "scoring_version": "phase3-deterministic-v1",
                 "scoring_mode": hybrid.get("scoring_mode", "deterministic_only"),
@@ -1001,6 +1928,15 @@ class Repository:
                 (job_id,),
             ).fetchone()
         return row_to_semantic_assessment(row) if row else None
+
+    def get_family_classification(self, job_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM job_family_classifications "
+                "WHERE job_id = ? ORDER BY created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+        return row_to_family_classification(row) if row else None
 
     def list_block_scores(self, job_id: str) -> list[dict[str, Any]]:
         with self.connect() as connection:
@@ -1111,6 +2047,224 @@ class Repository:
             ),
         )
 
+    def _ensure_pending_review(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        owner_id: str,
+        job_id: str,
+        packet_id: str | None,
+        review_type: str,
+        classification_ref_id: str | None,
+        tailoring_ref_id: str | None,
+        reason: str,
+    ) -> str:
+        existing = connection.execute(
+            """
+            SELECT id FROM review_items
+            WHERE owner_id = ? AND job_id = ? AND review_type = ? AND status = 'pending'
+            LIMIT 1
+            """,
+            (owner_id, job_id, review_type),
+        ).fetchone()
+        if existing is not None:
+            return str(existing["id"])
+        now = utc_now_iso()
+        review_id = str(uuid4())
+        connection.execute(
+            """
+            INSERT INTO review_items (
+                id, owner_id, job_id, packet_id, review_type, status,
+                classification_ref_id, tailoring_ref_id, reason,
+                created_at, updated_at, resolved_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, NULL)
+            """,
+            (
+                review_id,
+                owner_id,
+                job_id,
+                packet_id,
+                review_type,
+                classification_ref_id,
+                tailoring_ref_id,
+                reason,
+                now,
+                now,
+            ),
+        )
+        self._insert_event(
+            connection,
+            job_id=job_id,
+            event_type="review_created",
+            from_status=None,
+            to_status="pending",
+            message=f"Pending {review_type} review created.",
+            metadata={"review_id": review_id, "reason": reason},
+        )
+        return review_id
+
+    def _review_detail(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        classification = None
+        if row["classification_ref_id"]:
+            c_row = connection.execute(
+                "SELECT * FROM job_family_classifications WHERE id = ?",
+                (row["classification_ref_id"],),
+            ).fetchone()
+            classification = row_to_family_classification(c_row) if c_row else None
+        elif row["job_id"]:
+            c_row = connection.execute(
+                "SELECT * FROM job_family_classifications WHERE job_id = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (row["job_id"],),
+            ).fetchone()
+            classification = row_to_family_classification(c_row) if c_row else None
+        tailoring = None
+        if row["tailoring_ref_id"]:
+            t_row = connection.execute(
+                "SELECT * FROM job_tailoring_decisions WHERE id = ?",
+                (row["tailoring_ref_id"],),
+            ).fetchone()
+            tailoring = row_to_tailoring_decision(t_row) if t_row else None
+        elif row["job_id"]:
+            t_row = connection.execute(
+                "SELECT * FROM job_tailoring_decisions WHERE job_id = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (row["job_id"],),
+            ).fetchone()
+            tailoring = row_to_tailoring_decision(t_row) if t_row else None
+        job = row_to_job(self._get_job_row(connection, row["job_id"]))
+        resolutions = connection.execute(
+            "SELECT * FROM review_resolutions WHERE review_id = ? ORDER BY created_at ASC",
+            (row["id"],),
+        ).fetchall()
+        allowed_actions = _allowed_review_actions(str(row["review_type"]))
+        metadata = _review_metadata(classification, tailoring)
+        return {
+            "review_id": row["id"],
+            "job_id": row["job_id"],
+            "packet_id": row["packet_id"],
+            "review_type": row["review_type"],
+            "status": row["status"],
+            "reason": row["reason"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "resolved_at": row["resolved_at"],
+            "job": {
+                "job_id": job["job_id"],
+                "company": job["company"],
+                "title": job["title"],
+                "selected_cv_family": job["selected_cv_family"],
+            },
+            "classification": classification,
+            "tailoring": tailoring,
+            "metadata": metadata,
+            "allowed_actions": allowed_actions,
+            "resolution": row_to_review_resolution(resolutions[-1]) if resolutions else None,
+            "history": [row_to_review_resolution(item) for item in resolutions],
+        }
+
+    def _validate_review_resolution(
+        self,
+        detail: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        action = str(payload["action"])
+        classification = detail.get("classification") or {}
+        tailoring = detail.get("tailoring") or {}
+        original_family = str(
+            classification.get("selected_family")
+            or tailoring.get("base_family")
+            or detail["job"].get("selected_cv_family")
+            or ""
+        )
+        resolved_family = str(payload.get("resolved_family") or original_family)
+        if action == "override_family":
+            resolved_family = _valid_family(payload.get("resolved_family"))
+        elif action == "mark_out_of_scope":
+            resolved_family = "out_of_scope"
+        elif resolved_family not in FAMILY_IDS and resolved_family != "out_of_scope":
+            raise ValueError("resolved family is unknown")
+
+        original_blocks = list(
+            tailoring.get("final_blocks") or tailoring.get("base_blocks") or []
+        )
+        if not original_blocks and original_family in FAMILY_IDS:
+            registry = load_project_block_registry()
+            original_blocks = list(registry["base_project_order"][original_family])
+        resolved_blocks = list(original_blocks)
+        regeneration_status = "not_required"
+        failure_reason = None
+        review_status = {
+            "approve_classification": "approved",
+            "approve_tailoring": "approved",
+            "approve_order": "approved",
+            "defer": "deferred",
+            "mark_out_of_scope": "rejected",
+            "reject_tailoring": "rejected",
+            "use_master_unchanged": "overridden",
+            "override_family": "overridden",
+            "select_approved_replacement": "overridden",
+        }[action]
+
+        if action in {"override_family", "use_master_unchanged"} and resolved_family in FAMILY_IDS:
+            registry = load_project_block_registry()
+            resolved_blocks = list(registry["base_project_order"][resolved_family])
+            regeneration_status = "queued"
+        if action == "reject_tailoring":
+            if original_family not in FAMILY_IDS:
+                raise ValueError("cannot reject tailoring without a valid base family")
+            registry = load_project_block_registry()
+            resolved_family = original_family
+            resolved_blocks = list(registry["base_project_order"][original_family])
+            regeneration_status = "queued"
+        if action == "select_approved_replacement":
+            if resolved_family not in FAMILY_IDS:
+                raise ValueError("resolved family is required for replacement selection")
+            registry = load_project_block_registry()
+            removed = str(payload.get("removed_block") or "").strip()
+            inserted = str(payload.get("inserted_block") or "").strip()
+            if not removed or not inserted:
+                raise ValueError("removed_block and inserted_block are required")
+            try:
+                validate_replacement_pair(resolved_family, removed, inserted, registry)
+            except ProjectBlockRegistryError as error:
+                raise ValueError(str(error)) from error
+            base_blocks = list(registry["base_project_order"][resolved_family])
+            if removed not in base_blocks:
+                raise ValueError("removed block is not in the resolved family master")
+            resolved_blocks = [block for block in base_blocks if block != removed] + [inserted]
+            if len(resolved_blocks) != len(set(resolved_blocks)):
+                raise ValueError("resolved project blocks contain a duplicate")
+            regeneration_status = "queued"
+        if action in {"approve_tailoring", "approve_order"} and tailoring:
+            resolved_blocks = list(tailoring.get("final_blocks") or [])
+            if not resolved_blocks:
+                raise ValueError("tailoring decision does not contain final blocks")
+        if action == "approve_classification" and not classification:
+            raise ValueError("classification decision is unavailable")
+
+        return {
+            "action": action,
+            "original_family": original_family,
+            "resolved_family": resolved_family,
+            "original_blocks": original_blocks,
+            "resolved_blocks": resolved_blocks,
+            "review_status": review_status,
+            "regeneration_status": regeneration_status,
+            "failure_reason": failure_reason,
+            "classifier_version": classification.get("classifier_version")
+            or tailoring.get("classifier_version"),
+            "registry_version": tailoring.get("registry_version"),
+            "policy_version": tailoring.get("policy_version"),
+            "eligible_for_calibration": action
+            in {"approve_classification", "override_family", "mark_out_of_scope"},
+        }
+
 
 def row_to_job(row: sqlite3.Row) -> dict[str, Any]:
     return {
@@ -1118,6 +2272,7 @@ def row_to_job(row: sqlite3.Row) -> dict[str, Any]:
         "job_id": row["id"],
         "source_url": row["source_url"],
         "normalized_url": row["normalized_url"],
+        "owner_id": row["owner_id"],
         "page_title": row["page_title"],
         "raw_visible_text": row["raw_visible_text"],
         "source_site": row["source_site"],
@@ -1159,6 +2314,14 @@ def row_to_job(row: sqlite3.Row) -> dict[str, Any]:
         "cv_family_selection": json.loads(row["cv_family_selection_json"])
         if row["cv_family_selection_json"]
         else None,
+        "family_classification": json.loads(row["family_classification_json"])
+        if row["family_classification_json"]
+        else None,
+        "family_classifier_version": row["family_classifier_version"],
+        "family_classification_decision": row["family_classification_decision"],
+        "family_classification_requires_review": bool(
+            row["family_classification_requires_review"]
+        ),
         "scoring_status": row["scoring_status"],
         "scoring_version": row["scoring_version"],
         "scoring_mode": row["scoring_mode"],
@@ -1222,9 +2385,18 @@ def row_to_packet(row: sqlite3.Row) -> dict[str, Any]:
         "selected_cv_family": row["selected_cv_family"],
         "artifact_directory": row["artifact_directory"],
         "pdf_path": row["pdf_path"], "tex_path": row["tex_path"],
-        "selected_cv_path": row["selected_cv_path"], "manifest_path": row["manifest_path"],
+        "selected_cv_path": row["selected_cv_path"],
+        "tailoring_decision_path": row["tailoring_decision_path"],
+        "manifest_path": row["manifest_path"],
         "page_count": row["page_count"], "failure_stage": row["failure_stage"],
-        "failure_reason": row["failure_reason"], "created_at": row["created_at"],
+        "failure_reason": row["failure_reason"],
+        "generation_kind": row["generation_kind"],
+        "source_packet_id": row["source_packet_id"],
+        "review_id": row["review_id"],
+        "review_resolution_id": row["review_resolution_id"],
+        "idempotency_key": row["idempotency_key"],
+        "generation_reason": row["generation_reason"],
+        "created_at": row["created_at"],
         "updated_at": row["updated_at"], "completed_at": row["completed_at"],
     }
 
@@ -1257,6 +2429,151 @@ def row_to_semantic_assessment(row: sqlite3.Row) -> dict[str, Any]:
         if row["semantic_assessment_json"]
         else None,
         "created_at": row["created_at"],
+    }
+
+
+def row_to_family_classification(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "job_id": row["job_id"],
+        "classifier_version": row["classifier_version"],
+        "config_version": row["config_version"],
+        "family_scores": json.loads(row["family_scores_json"]),
+        "selected_family": row["selected_family"],
+        "secondary_family": row["secondary_family"],
+        "confidence": row["confidence"],
+        "decision": row["decision"],
+        "requires_review": bool(row["requires_review"]),
+        "rule_evidence": json.loads(row["rule_evidence_json"]),
+        "semantic_evidence": json.loads(row["semantic_evidence_json"]),
+        "deterministic_scores": json.loads(row["deterministic_scores_json"]),
+        "semantic_scores": json.loads(row["semantic_scores_json"])
+        if row["semantic_scores_json"]
+        else None,
+        "created_at": row["created_at"],
+    }
+
+
+def row_to_tailoring_decision(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "job_id": row["job_id"],
+        "packet_id": row["packet_id"],
+        "base_family": row["base_family"],
+        "classification_decision": row["classification_decision"],
+        "base_blocks": json.loads(row["base_blocks_json"]),
+        "final_blocks": json.loads(row["final_blocks_json"]),
+        "removed_block": row["removed_block"],
+        "inserted_block": row["inserted_block"],
+        "scores": json.loads(row["scores_json"]),
+        "replacement_gain": row["replacement_gain"],
+        "evidence": json.loads(row["evidence_json"]),
+        "requires_review": bool(row["requires_review"]),
+        "tailoring_status": row["tailoring_status"],
+        "fallback_reason": row["fallback_reason"],
+        "policy_version": row["policy_version"],
+        "registry_version": row["registry_version"],
+        "classifier_version": row["classifier_version"],
+        "decision": json.loads(row["decision_json"]),
+        "created_at": row["created_at"],
+    }
+
+
+def row_to_review_summary(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "review_id": row["id"],
+        "job_id": row["job_id"],
+        "packet_id": row["packet_id"],
+        "review_type": row["review_type"],
+        "status": row["status"],
+        "reason": row["reason"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "resolved_at": row["resolved_at"],
+        "job": {
+            "title": row["job_title"],
+            "company": row["job_company"],
+            "selected_cv_family": row["job_selected_family"],
+        },
+        "classification": {
+            "selected_family": row["classification_family"],
+            "decision": row["classification_decision"],
+            "requires_review": bool(row["classification_requires_review"])
+            if row["classification_decision"] is not None
+            else None,
+        },
+        "tailoring": {
+            "status": row["tailoring_status"],
+            "requires_review": bool(row["tailoring_requires_review"])
+            if row["tailoring_status"] is not None
+            else None,
+        },
+    }
+
+
+def row_to_review_resolution(row: sqlite3.Row) -> dict[str, Any]:
+    resolution = json.loads(row["resolution_json"])
+    retry_allowed = (
+        row["regeneration_status"] == "failed"
+        and (row["failure_code"] in REGENERATION_RETRYABLE_ERRORS)
+        and int(row["attempt_count"] or 0) < REGENERATION_MAX_ATTEMPTS
+    )
+    return {
+        "resolution_id": row["id"],
+        "review_id": row["review_id"],
+        "job_id": row["job_id"],
+        "packet_id": row["packet_id"],
+        "action": row["action"],
+        "reviewer_id": row["reviewer_id"],
+        "review_note": row["review_note"],
+        "original_family": row["original_family"],
+        "resolved_family": row["resolved_family"],
+        "original_blocks": json.loads(row["original_blocks_json"]),
+        "resolved_blocks": json.loads(row["resolved_blocks_json"]),
+        "regeneration_status": row["regeneration_status"],
+        "regeneration_packet_id": row["regeneration_packet_id"],
+        "regeneration_job_id": row["regeneration_job_id"],
+        "source_packet_id": row["source_packet_id"],
+        "queued_at": row["queued_at"],
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+        "failed_at": row["failed_at"],
+        "attempt_count": row["attempt_count"],
+        "failure_code": row["failure_code"],
+        "failure_reason": row["failure_reason"],
+        "retry_allowed": retry_allowed,
+        "created_at": row["created_at"],
+        "details": resolution,
+    }
+
+
+def row_to_regeneration_job(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "regeneration_job_id": row["id"],
+        "review_resolution_id": row["review_resolution_id"],
+        "review_id": row["review_id"],
+        "owner_id": row["owner_id"],
+        "job_id": row["job_id"],
+        "source_packet_id": row["source_packet_id"],
+        "generated_packet_id": row["generated_packet_id"],
+        "idempotency_key": row["idempotency_key"],
+        "status": row["status"],
+        "attempt_count": row["attempt_count"],
+        "lease_owner": row["lease_owner"],
+        "lease_expires_at": row["lease_expires_at"],
+        "queued_at": row["queued_at"],
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+        "failed_at": row["failed_at"],
+        "failure_code": row["failure_code"],
+        "failure_reason": row["failure_reason"],
+        "policy_version": row["policy_version"],
+        "registry_version": row["registry_version"],
+        "classifier_version": row["classifier_version"],
+        "packet_generator_version": row["packet_generator_version"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
     }
 
 
@@ -1305,3 +2622,114 @@ def ensure_no_unexpected_tables(repository: Repository, expected: Iterable[str])
     unexpected = names.difference(expected)
     if unexpected:
         raise AssertionError(f"unexpected tables: {sorted(unexpected)}")
+
+
+def _classification_needs_review(classification: dict[str, Any]) -> bool:
+    return bool(classification.get("requires_review")) or str(
+        classification.get("decision")
+    ) in REVIEWABLE_CLASSIFICATION_DECISIONS
+
+
+def _tailoring_needs_review(decision: dict[str, Any]) -> bool:
+    return bool(decision.get("requires_review")) or str(
+        decision.get("tailoring_status")
+    ) in REVIEWABLE_TAILORING_STATUSES
+
+
+def _valid_family(value: Any) -> str:
+    family = str(value or "").strip()
+    if family not in FAMILY_IDS:
+        raise ValueError("resolved family is unknown")
+    return family
+
+
+def _regeneration_idempotency_key(
+    *,
+    resolution_id: str,
+    resolved_family: str,
+    resolved_blocks: list[str],
+    registry_version: str | None,
+    policy_version: str | None,
+) -> str:
+    payload = {
+        "resolution_id": resolution_id,
+        "resolved_family": resolved_family,
+        "resolved_blocks": resolved_blocks,
+        "registry_version": registry_version,
+        "policy_version": policy_version,
+        "packet_generator_version": "phase-h-review-regeneration-v1",
+    }
+    import hashlib
+
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _safe_failure_reason(reason: str) -> str:
+    text = str(reason).replace("\n", " ").strip()
+    text = re.sub(r"(/[^\s]+)+", "[path]", text)
+    return text[:300] or "Review regeneration failed."
+
+
+def _allowed_review_actions(review_type: str) -> list[str]:
+    if review_type == "classification":
+        return ["approve_classification", "override_family", "mark_out_of_scope", "defer"]
+    if review_type == "tailoring":
+        return [
+            "approve_tailoring",
+            "use_master_unchanged",
+            "select_approved_replacement",
+            "approve_order",
+            "reject_tailoring",
+            "defer",
+        ]
+    return sorted(REVIEW_ACTIONS)
+
+
+def _review_metadata(
+    classification: dict[str, Any] | None,
+    tailoring: dict[str, Any] | None,
+) -> dict[str, Any]:
+    registry = load_project_block_registry()
+    blocks = {
+        str(block["block_id"]): {
+            "block_id": block["block_id"],
+            "project_id": block["project_id"],
+            "display_name": block["display_name"],
+            "family": block["family"],
+            "source_master": block["source_master"],
+            "heading": block["heading"],
+            "subtitle": block["subtitle"],
+            "preview": " ".join(str(item) for item in block.get("bullets", [])[:2]),
+        }
+        for block in registry["blocks"]
+    }
+    replacement_options: list[dict[str, Any]] = []
+    for base_family, family_rules in registry["compatibility"].items():
+        for removed_block, rules in family_rules.items():
+            for rule in rules:
+                inserted_block = str(rule["insert_block_id"])
+                replacement_options.append({
+                    "base_family": base_family,
+                    "removed_block": removed_block,
+                    "inserted_block": inserted_block,
+                    "removed_name": blocks.get(removed_block, {}).get(
+                        "display_name", removed_block
+                    ),
+                    "inserted_name": blocks.get(inserted_block, {}).get(
+                        "display_name", inserted_block
+                    ),
+                    "requires_review": bool(rule.get("requires_review")),
+                    "reason": rule.get("reason"),
+                })
+    return {
+        "families": {
+            "digital_ic": "Digital IC / RTL",
+            "verification": "Verification / SoC Verification",
+            "software": "Software Engineering",
+            "ml": "Machine Learning Engineering",
+        },
+        "base_project_order": registry["base_project_order"],
+        "project_blocks": blocks,
+        "replacement_options": replacement_options,
+    }

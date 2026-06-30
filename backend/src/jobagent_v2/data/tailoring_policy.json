@@ -1,0 +1,16 @@
+{
+  "policy_version": "phase-d-one-block-tailoring-v1",
+  "minimum_replacement_gain": 0.15,
+  "clear_match_tailoring_gain": 0.2,
+  "dominant_family_margin": 0.25,
+  "allow_reordering": true,
+  "require_one_page": true,
+  "allow_duplicate_projects": false,
+  "score_weights": {
+    "responsibility": 0.35,
+    "domain": 0.25,
+    "technology": 0.2,
+    "project": 0.15,
+    "family_evidence": 0.05
+  }
+}

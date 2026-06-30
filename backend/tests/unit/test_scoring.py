@@ -31,18 +31,19 @@ def test_structured_jd_and_family_selection_for_rtl() -> None:
     )
     selection = select_cv_family(structured, load_cv_families())
 
-    assert structured["role_family_candidates"] == ["RTL / ASIC Design"]
-    assert selection["primary_family"] == "hardware_rtl"
+    assert structured["role_family_candidates"] == ["Digital IC / RTL Design"]
+    assert selection["primary_family"] == "digital_ic"
     assert selection["confidence"] in {"medium", "high"}
 
 
-def test_ambiguous_family_selection_records_secondary_family() -> None:
-    structured = structure_jd(job("GPU Firmware Engineer", "firmware gpu cuda c++"))
+def test_ml_family_selection_is_separate_from_software() -> None:
+    structured = structure_jd(
+        job("Machine Learning Engineer", "training pytorch inference quantization")
+    )
     selection = select_cv_family(structured, load_cv_families())
 
-    assert selection["primary_family"] in {"cpu_gpu_architecture", "embedded_firmware"}
-    assert selection["secondary_family"] in {"cpu_gpu_architecture", "embedded_firmware"}
-    assert selection["secondary_family"] != selection["primary_family"]
+    assert selection["primary_family"] == "ml"
+    assert selection["secondary_family"] is None
 
 
 def test_invalid_truth_bank_is_visible_failure() -> None:

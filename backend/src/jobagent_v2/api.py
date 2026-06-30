@@ -1,4 +1,4 @@
-"""Minimal local HTTP API for Phase 1."""
+"""Local HTTP API for JobAgent V2."""
 
 from __future__ import annotations
 
@@ -27,15 +27,21 @@ API_DOCUMENTATION = {
     "GET /api/packets/{packet_id}": "Return a packet attempt.",
     "GET /api/packets/{packet_id}/manifest": "Return a packet manifest.",
     "GET /api/packets/{packet_id}/pdf": "Serve a generated packet PDF.",
-    "POST /api/jobs/{job_id}/retry": "Retry failed/manual-review dummy work.",
+    "GET /api/reviews": "List review items. Defaults to pending reviews.",
+    "GET /api/reviews/{review_id}": "Return a complete review item.",
+    "POST /api/reviews/{review_id}/resolve": "Resolve a review with a validated action.",
+    "GET /api/reviews/feedback": "Export reviewed outcomes for later calibration.",
+    "POST /api/jobs/{job_id}/reviews": "Create a manual review for a job decision.",
+    "POST /api/jobs/{job_id}/retry": "Retry failed/manual-review work.",
     "POST /api/jobs/{job_id}/archive": "Archive a job.",
     "GET /api/jobs/{job_id}/events": "Return persisted job event history.",
     "GET /api/jobs/{job_id}/score": "Return persisted Phase 3 scoring diagnostics.",
     "GET /api/jobs/{job_id}/block-scores": "Return persisted block-level scores.",
     "GET /api/jobs/{job_id}/semantic-assessment": "Return persisted hybrid semantic diagnostics.",
     "POST /api/jobs/{job_id}/rescore": "Rescore a completed intake job.",
-    "POST /api/workers/q1/run-once": "Run one dummy Q1 job.",
-    "POST /api/workers/q2/run-once": "Run one dummy Q2 job.",
+    "POST /api/workers/q1/run-once": "Run one Queue 1 intake/scoring job.",
+    "POST /api/workers/q2/run-once": "Run one Queue 2 packet-generation job.",
+    "POST /api/workers/regeneration/run-once": "Run one reviewed packet-regeneration job.",
     "POST /api/workers/promotion/run-once": "Run one deterministic promotion scheduler cycle.",
     "GET /api/queue/q2": "List persistent Q2 tasks and queue capacity diagnostics.",
 }
@@ -47,7 +53,7 @@ def create_service(db_path: Path | str, artifact_root: Path | str) -> JobService
 
 def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "JobAgentV2Phase1/0.1"
+        server_version = "JobAgentV2Local/0.1"
 
         def do_OPTIONS(self) -> None:
             self._send_json({"ok": True})
@@ -70,6 +76,28 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                 if path == "/api/queue/q2":
                     self._send_json(service.list_q2_tasks())
                     return
+                if path == "/api/reviews":
+                    self._send_json(
+                        service.list_reviews(
+                            owner_id=self._owner_id(query),
+                            status=_single_query(query, "status", "pending"),
+                            review_type=_single_query(query, "review_type"),
+                            family=_single_query(query, "family"),
+                            job_id=_single_query(query, "job_id"),
+                        )
+                    )
+                    return
+                if path == "/api/reviews/feedback":
+                    self._send_json(
+                        service.export_review_feedback(owner_id=self._owner_id(query))
+                    )
+                    return
+                review_id, review_suffix = _match_review_route(path)
+                if review_id and review_suffix == "":
+                    self._send_json(
+                        service.get_review(review_id, owner_id=self._owner_id(query))
+                    )
+                    return
                 packet_id, packet_suffix = _match_packet_route(path)
                 if packet_id and packet_suffix == "":
                     self._send_json(service.get_packet(packet_id))
@@ -77,7 +105,11 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                 if packet_id and packet_suffix in {"/manifest", "/pdf"}:
                     file_key = "manifest_path" if packet_suffix == "/manifest" else "pdf_path"
                     try:
-                        file_path = service.packet_artifact(packet_id, file_key)
+                        file_path = service.packet_artifact(
+                            packet_id,
+                            file_key,
+                            owner_id=self._owner_id(query),
+                        )
                     except FileNotFoundError:
                         self._send_json({"error": "packet artifact is unavailable"}, status=404)
                         return
@@ -127,8 +159,21 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                 if path == "/api/workers/q2/run-once":
                     self._send_json(service.run_q2_once())
                     return
+                if path == "/api/workers/regeneration/run-once":
+                    self._send_json(service.run_regeneration_once())
+                    return
                 if path == "/api/workers/promotion/run-once":
                     self._send_json(service.run_promotion_once())
+                    return
+                review_id, review_suffix = _match_review_route(path)
+                if review_id and review_suffix == "/resolve":
+                    self._send_json(
+                        service.resolve_review(
+                            review_id,
+                            self._read_json(),
+                            owner_id=self._owner_id({}),
+                        )
+                    )
                     return
                 job_id, suffix = _match_job_route(path)
                 if job_id and suffix == "/generate":
@@ -151,6 +196,16 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                     return
                 if job_id and suffix == "/rescore":
                     self._send_json(service.rescore(job_id))
+                    return
+                if job_id and suffix == "/reviews":
+                    self._send_json(
+                        service.create_review(
+                            job_id,
+                            self._read_json(),
+                            owner_id=self._owner_id({}),
+                        ),
+                        status=201,
+                    )
                     return
                 self._send_json({"error": "not found"}, status=404)
             except (ValidationError, ValueError, InvalidTransitionError) as error:
@@ -177,7 +232,7 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-JobAgent-Owner")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.end_headers()
             self.wfile.write(body)
@@ -193,6 +248,12 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
+
+        def _owner_id(self, query: dict[str, list[str]]) -> str:
+            owner = self.headers.get("X-JobAgent-Owner") or _single_query(
+                query, "owner_id", "local"
+            )
+            return owner.strip() or "local"
 
     Handler.service = service
     return Handler
@@ -229,3 +290,26 @@ def _match_packet_route(path: str) -> tuple[str | None, str]:
         packet_id, suffix = rest.split("/", 1)
         return packet_id, f"/{suffix}"
     return rest, ""
+
+
+def _match_review_route(path: str) -> tuple[str | None, str]:
+    prefix = "/api/reviews/"
+    if not path.startswith(prefix):
+        return None, ""
+    rest = path[len(prefix):]
+    if "/" in rest:
+        review_id, suffix = rest.split("/", 1)
+        return review_id, f"/{suffix}"
+    return rest, ""
+
+
+def _single_query(
+    query: dict[str, list[str]],
+    key: str,
+    default: str | None = None,
+) -> str | None:
+    values = query.get(key)
+    if not values:
+        return default
+    value = values[0].strip()
+    return value or default

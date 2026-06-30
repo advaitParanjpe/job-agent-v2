@@ -8,14 +8,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from jobagent_v2.family_classifier import (
+    classify_job_family,
+    selection_from_classification,
+)
+from jobagent_v2.truth_banks import (
+    TruthBankValidationError,
+    list_truth_bank_previews,
+    load_truth_bank_json,
+    validate_truth_bank as validate_truth_bank_schema,
+)
+
 
 SCORING_VERSION = "phase3-deterministic-v1"
 FAMILY_CONFIG_PATH = Path(__file__).with_name("data") / "cv_families.json"
 TRUTH_BANK_ROOT = Path(__file__).with_name("data") / "truth_banks"
 SKILL_TERMS = (
-    "systemverilog", "verilog", "vhdl", "rtl", "asic", "fpga", "uvm", "python",
-    "c++", "c", "linux", "embedded", "firmware", "cuda", "gpu", "cpu", "architecture",
+    "systemverilog", "verilog", "vhdl", "rtl", "asic", "fpga", "uvm", "sva",
+    "coverage", "scoreboard", "testbench", "regression", "python", "c++", "c",
+    "linux", "embedded", "firmware", "cuda", "gpu", "cpu", "architecture",
     "backend", "distributed systems", "sql", "aws", "docker", "kubernetes",
+    "pytorch", "tensorflow", "machine learning", "inference", "training",
+    "quantization", "model evaluation", "computer vision", "nlp",
 )
 
 
@@ -37,6 +51,7 @@ class ScoringResult:
     gaps: list[str]
     hard_blockers: list[str]
     score_breakdown: dict[str, Any]
+    family_classification: dict[str, Any]
 
 
 def load_cv_families(path: Path = FAMILY_CONFIG_PATH) -> list[dict[str, Any]]:
@@ -53,25 +68,30 @@ def load_cv_families(path: Path = FAMILY_CONFIG_PATH) -> list[dict[str, Any]]:
 
 def load_truth_bank(family: dict[str, Any], root: Path = TRUTH_BANK_ROOT) -> dict[str, Any]:
     path = root / str(family["truth_bank_path"])
-    data = json.loads(path.read_text(encoding="utf-8"))
-    validate_truth_bank(data, expected_family=str(family["id"]))
-    return data
+    try:
+        return load_truth_bank_json(path, expected_family=str(family["id"]), allow_starter=True)
+    except (OSError, json.JSONDecodeError, TruthBankValidationError) as error:
+        raise ScoringConfigurationError(str(error)) from error
 
 
 def validate_truth_bank(data: dict[str, Any], *, expected_family: str) -> None:
-    if data.get("family_id") != expected_family or not data.get("version"):
-        raise ScoringConfigurationError("truth bank family or version is invalid")
-    blocks = data.get("blocks")
-    if not isinstance(blocks, list) or not blocks:
-        raise ScoringConfigurationError("truth bank requires blocks")
-    ids: set[str] = set()
-    for block in blocks:
-        required = {"id", "type", "name", "canonical_text", "technologies", "domains", "provenance"}
-        if not isinstance(block, dict) or not required.issubset(block):
-            raise ScoringConfigurationError("truth bank block is missing required fields")
-        if block["id"] in ids or block["type"] not in {"experience", "project"}:
-            raise ScoringConfigurationError("truth bank block ID or type is invalid")
-        ids.add(str(block["id"]))
+    try:
+        validate_truth_bank_schema(data, expected_family=expected_family, allow_starter=True)
+    except TruthBankValidationError as error:
+        raise ScoringConfigurationError(str(error)) from error
+
+
+def preview_truth_banks(
+    families_path: Path = FAMILY_CONFIG_PATH,
+    *,
+    allow_starter: bool = False,
+) -> list[dict[str, Any]]:
+    families = load_cv_families(families_path)
+    return list_truth_bank_previews(
+        families,
+        root=families_path.parent / "truth_banks",
+        allow_starter=allow_starter,
+    )
 
 
 def structure_jd(job: dict[str, Any]) -> dict[str, Any]:
@@ -111,10 +131,14 @@ def structure_jd(job: dict[str, Any]) -> dict[str, Any]:
 
 def classify_role_family(title: str, text: str) -> str:
     value = f"{title} {text}".lower()
+    if any(term in value for term in ("machine learning", "pytorch", "tensorflow", "inference")):
+        return "Machine Learning Engineering"
     if any(term in value for term in ("rtl", "asic", "systemverilog", "verilog", "fpga")):
-        return "RTL / ASIC Design"
+        return "Digital IC / RTL Design"
+    if any(term in value for term in ("uvm", "sva", "verification", "coverage", "testbench")):
+        return "Design Verification / SoC Verification"
     if any(term in value for term in ("gpu", "cpu", "accelerator", "microarchitecture")):
-        return "CPU / GPU Architecture"
+        return "Digital IC / RTL Design"
     if any(term in value for term in ("embedded", "firmware", "microcontroller")):
         return "Embedded Firmware"
     return "Software Engineering"
@@ -123,37 +147,14 @@ def classify_role_family(title: str, text: str) -> str:
 def select_cv_family(
     structured: dict[str, Any], families: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    evidence = " ".join(
-        str(item)
-        for item in (structured["title"], structured["skills"], structured["domains"])
-    ).lower()
-    ranked: list[tuple[int, dict[str, Any], list[str]]] = []
-    for family in families:
-        if not family["enabled"]:
-            continue
-        matches = [
-            term for term in family["target_role_patterns"] if term.lower() in evidence
-        ]
-        ranked.append((len(matches), family, matches))
-    ranked.sort(key=lambda item: (item[0], item[1]["id"]), reverse=True)
-    if not ranked or ranked[0][0] == 0:
-        raise ScoringConfigurationError("no enabled CV family has supporting evidence")
-    score, primary, matches = ranked[0]
-    secondary = (
-        ranked[1][1]["id"] if len(ranked) > 1 and ranked[1][0] == score else None
+    enabled = {str(family["id"]) for family in families if family["enabled"]}
+    result = classify_job_family(
+        {"title": structured.get("title"), "jd_text": _structured_text(structured)},
+        structured_jd=structured,
     )
-    confidence = (
-        "high" if score >= 3 and not secondary else "medium" if score >= 2 else "low"
-    )
-    return {
-        "primary_family": primary["id"],
-        "secondary_family": secondary,
-        "confidence": confidence,
-        "reason": f"Matched role evidence: {', '.join(matches)}.",
-        "evidence": matches,
-        "selector_version": SCORING_VERSION,
-        "manual_override": None,
-    }
+    if result.selected_family not in enabled:
+        raise ScoringConfigurationError("selected CV family is not enabled")
+    return selection_from_classification(result)
 
 
 def score_job(
@@ -161,12 +162,20 @@ def score_job(
 ) -> ScoringResult:
     structured = structure_jd(job)
     families = load_cv_families(families_path)
-    selection = select_cv_family(structured, families)
+    classification = classify_job_family(job, structured_jd=structured)
+    selection = selection_from_classification(classification)
+    if selection["primary_family"] not in {
+        str(family["id"]) for family in families if family["enabled"]
+    }:
+        raise ScoringConfigurationError("selected CV family is not enabled")
     family = next(item for item in families if item["id"] == selection["primary_family"])
     bank = load_truth_bank(family, families_path.parent / "truth_banks")
     blocks = [score_block(block, structured) for block in bank["blocks"]]
     sections = section_scores(blocks, structured)
-    return overall_score(structured, selection, blocks, sections)
+    return overall_score(
+        structured, selection, blocks, sections,
+        family_classification=classification.to_dict(),
+    )
 
 
 def score_block(block: dict[str, Any], structured: dict[str, Any]) -> dict[str, Any]:
@@ -246,6 +255,8 @@ def overall_score(
     selection: dict[str, Any],
     blocks: list[dict[str, Any]],
     sections: dict[str, Any],
+    *,
+    family_classification: dict[str, Any] | None = None,
 ) -> ScoringResult:
     top = sorted((item["aggregate_score"] for item in blocks), reverse=True)[:3]
     top_average = sum(top) / max(1, len(top))
@@ -299,6 +310,7 @@ def overall_score(
         structured, selection, blocks, sections, score, recommendation,
         classify_role_family(str(structured["title"] or ""), " ".join(structured["keywords"])),
         reason, strengths, gaps, blockers, breakdown,
+        family_classification or selection.get("classifier", {}),
     )
 
 
@@ -328,3 +340,17 @@ def _hard_blockers(lowered: str) -> list[str]:
     if "security clearance" in lowered or "active clearance" in lowered:
         blockers.append("Security clearance requirement")
     return blockers
+
+
+def _structured_text(structured: dict[str, Any]) -> str:
+    values: list[str] = []
+    for key in (
+        "responsibilities", "must_have_requirements", "nice_to_have_requirements",
+        "skills", "technologies", "domains", "keywords",
+    ):
+        item = structured.get(key)
+        if isinstance(item, list):
+            values.extend(str(value) for value in item)
+        elif item:
+            values.append(str(item))
+    return "\n".join(values)

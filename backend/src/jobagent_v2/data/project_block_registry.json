@@ -1,0 +1,338 @@
+{
+  "schema_version": "project-block-registry-v1",
+  "policy_version": "phase-c-project-tailoring-policy-v1",
+  "families": ["digital_ic", "verification", "software", "ml"],
+  "render_policy": {
+    "type": "conservative_text_wrap",
+    "chars_per_line": 95,
+    "heading_lines": 1
+  },
+  "tailoring_policy": {
+    "maximum_project_substitutions": 1,
+    "bullet_rewriting_allowed": false,
+    "project_block_editing_allowed": false,
+    "dynamic_skills_allowed": false,
+    "education_editing_allowed": false,
+    "experience_editing_allowed": false,
+    "project_reordering_allowed": true,
+    "review_required_for_cross_family": true
+  },
+  "base_project_order": {
+    "digital_ic": [
+      "tinynpu_digital_ic_v1",
+      "sparrow_v_digital_ic_v1",
+      "sparrow_cluster_digital_ic_v1"
+    ],
+    "verification": [
+      "axi4_stream_packet_router_verification_v1",
+      "agentic_rtl_security_verification_v1",
+      "sparrow_v_verification_v1"
+    ],
+    "software": [
+      "jobagent_software_v1",
+      "agentic_rtl_security_discovery_software_v1",
+      "sparrowml_software_v1"
+    ],
+    "ml": [
+      "dementia_speech_classification_ml_v1",
+      "sparrowml_ml_v1",
+      "speakup_ml_v1"
+    ]
+  },
+  "compatibility": {
+    "digital_ic": {
+      "sparrow_cluster_digital_ic_v1": [
+        {
+          "insert_block_id": "sparrowml_ml_v1",
+          "requires_review": true,
+          "reason": "Approved ML-family SparrowML block may be considered for hybrid Digital IC/ML roles."
+        }
+      ]
+    },
+    "verification": {
+      "agentic_rtl_security_verification_v1": [
+        {
+          "insert_block_id": "sparrow_v_verification_v1",
+          "requires_review": false,
+          "reason": "Approved verification-family Sparrow-V block can substitute for another verification project block."
+        }
+      ]
+    },
+    "software": {},
+    "ml": {
+      "speakup_ml_v1": [
+        {
+          "insert_block_id": "sparrowml_ml_v1",
+          "requires_review": false,
+          "reason": "Approved ML-family SparrowML block can substitute for another ML project block."
+        }
+      ]
+    }
+  },
+  "blocks": [
+    {
+      "block_id": "tinynpu_digital_ic_v1",
+      "project_id": "tinynpu",
+      "display_name": "tinyNPU",
+      "family": "digital_ic",
+      "eligible_families": ["digital_ic"],
+      "approved": true,
+      "immutable": true,
+      "source_master": "digital_ic",
+      "heading": "tinyNPU",
+      "subtitle": "$\\mid$ Matrix-Multiply Accelerator with ASIC Flow (SystemVerilog)",
+      "dates": "May 2026 -- Jun 2026",
+      "bullets": [
+        "Designed synthesizable RTL for a 4x4 signed-INT8 matrix-multiply accelerator with a parallel MAC array, scratchpad memories, DMA data movement, and AXI/APB wrapper variants.",
+        "Built double-buffered memories and independent load, compute, and output FSMs, achieving 64 cycles/tile steady-state throughput.",
+        "Improved 100 MHz WNS from -5.83 ns to -0.34 ns through STA-guided MAC pipelining, then ran an OpenLane/SKY130 RTL-to-GDS flow producing DRC/LVS-clean layouts."
+      ],
+      "tags": ["rtl", "asic", "systemverilog", "sta", "ppa", "openlane"],
+      "render_budget": {"max_lines": 10},
+      "evidence_refs": [{"source": "master_tex", "family": "digital_ic"}],
+      "content_hash": "1b47db6e94a41b3489c0b75c8b3e5418f439112ca982b0bf5d698caca4cd2963"
+    },
+    {
+      "block_id": "sparrow_v_digital_ic_v1",
+      "project_id": "sparrow_v",
+      "display_name": "Sparrow-V",
+      "family": "digital_ic",
+      "eligible_families": ["digital_ic"],
+      "approved": true,
+      "immutable": true,
+      "source_master": "digital_ic",
+      "heading": "Sparrow-V",
+      "subtitle": "$\\mid$ Sparse-Aware RISC-V Processor (SystemVerilog, C, Python)",
+      "dates": "Mar 2026 -- Jun 2026",
+      "bullets": [
+        "Designed a synthesizable RV32I processor with a tightly coupled four-lane INT8/INT16 vector engine for quantized edge workloads.",
+        "Implemented a custom vector ISA, pipeline control, forwarding, branch redirection, precise traps, memory backpressure, and 2:4 structured-sparse execution.",
+        "Evaluated microarchitectural behavior through differential testing, randomized workloads, assertions, cycle counters, and synthesis-oriented area/timing analysis."
+      ],
+      "tags": ["rtl", "risc-v", "processor", "vector", "sparse"],
+      "render_budget": {"max_lines": 10},
+      "evidence_refs": [{"source": "master_tex", "family": "digital_ic"}],
+      "content_hash": "11916c474385c4d00a4ddc36b316432a38e76101e9f7fdb7bbd835f606dfe75a"
+    },
+    {
+      "block_id": "sparrow_cluster_digital_ic_v1",
+      "project_id": "sparrow_cluster",
+      "display_name": "Sparrow-Cluster",
+      "family": "digital_ic",
+      "eligible_families": ["digital_ic"],
+      "approved": true,
+      "immutable": true,
+      "source_master": "digital_ic",
+      "heading": "Sparrow-Cluster",
+      "subtitle": "$\\mid$ Four-Core Coherent RISC-V SoC (SystemVerilog)",
+      "dates": "Jun 2026",
+      "bullets": [
+        "Architected a four-core RV32I system with private 2 KiB L1 instruction/data caches, shared memory, and blocking cache operation.",
+        "Designed a snoopy MSI protocol with write-back, write-allocate L1 data caches and a round-robin shared interconnect.",
+        "Implemented invalidation/writeback handling, multicore synchronization, LR/SC, and performance counters, then validated scaling and false-sharing-sensitive workloads across 1, 2, and 4 cores."
+      ],
+      "tags": ["rtl", "risc-v", "soc", "cache", "coherence"],
+      "render_budget": {"max_lines": 10},
+      "evidence_refs": [{"source": "master_tex", "family": "digital_ic"}],
+      "content_hash": "51c6c23050863930e19a99f9f2d5024aa0275bbb21a72d1cfd1200713cd36713"
+    },
+    {
+      "block_id": "axi4_stream_packet_router_verification_v1",
+      "project_id": "axi4_stream_packet_router",
+      "display_name": "AXI4-Stream Packet Router",
+      "family": "verification",
+      "eligible_families": ["verification"],
+      "approved": true,
+      "immutable": true,
+      "source_master": "verification",
+      "heading": "AXI4-Stream Packet Router",
+      "subtitle": "$\\mid$ RTL Design and UVM Verification (SystemVerilog, UVM)",
+      "dates": "Jun 2026",
+      "bullets": [
+        "Designed and verified a 2-input, 4-output AXI4-Stream packet router with store-and-forward buffers, round-robin arbitration, packet locking, backpressure, and malformed-packet dropping.",
+        "Built conventional and UVM environments with reusable agents/BFMs, monitors, independent reference models, scoreboards, protocol checks, virtual sequences, and explicit scenario coverage.",
+        "Passed 32 deterministic closure seeds across conventional and UVM regressions, covering all input--destination pairs, contention, stalls, resets, drop modes, counter wrap, and head-of-line blocking."
+      ],
+      "tags": ["verification", "uvm", "axi", "systemverilog", "coverage"],
+      "render_budget": {"max_lines": 10},
+      "evidence_refs": [{"source": "master_tex", "family": "verification"}],
+      "content_hash": "de2f4ca69c63ac45246837a4c50d0039ac7ee831ea15a3a8e6a90d8d1df00f7a"
+    },
+    {
+      "block_id": "agentic_rtl_security_verification_v1",
+      "project_id": "agentic_rtl_security",
+      "display_name": "Agentic RTL Security",
+      "family": "verification",
+      "eligible_families": ["verification"],
+      "approved": true,
+      "immutable": true,
+      "source_master": "verification",
+      "heading": "Agentic RTL Security",
+      "subtitle": "$\\mid$ Evidence-Gated SoC Bug Discovery (SystemVerilog, Python)",
+      "dates": "May 2026",
+      "bullets": [
+        "Created a mini-SoC with ten seeded RTL/security bugs spanning MMIO, privilege checks, state handling, and protocol behavior.",
+        "Built deterministic directed tests, random fuzzing, clean-versus-bug simulation oracles, and reproducible failure artifacts; the baseline regression detected all 10 seeded bugs.",
+        "Implemented trace generation, failure minimization, and evidence-backed reporting to compare conventional and LLM-assisted verification workflows."
+      ],
+      "tags": ["verification", "security", "rtl", "python", "simulation"],
+      "render_budget": {"max_lines": 10},
+      "evidence_refs": [{"source": "master_tex", "family": "verification"}],
+      "content_hash": "68313f9ae859096a641b82baa87741c0e34bb7b52f8985a3f763decc671ef9de"
+    },
+    {
+      "block_id": "sparrow_v_verification_v1",
+      "project_id": "sparrow_v",
+      "display_name": "Sparrow-V Verification",
+      "family": "verification",
+      "eligible_families": ["verification"],
+      "approved": true,
+      "immutable": true,
+      "source_master": "verification",
+      "heading": "Sparrow-V Verification",
+      "subtitle": "$\\mid$ RISC-V Differential and Random Verification (SystemVerilog, C, Python)",
+      "dates": "Mar 2026 -- Jun 2026",
+      "bullets": [
+        "Developed differential testing against a reference model for RV32I execution, custom vector operations, retirement behavior, and scalar-vector command/completion semantics.",
+        "Verified stalls, dependencies, redirects, subword accesses, misalignment traps, exceptions, backpressure, and precise retirement through randomized campaigns and focused regressions.",
+        "Added assertions, cycle/retirement tracing, golden C/Python models, and a 500-seed confidence campaign for deterministic verification closure."
+      ],
+      "tags": ["verification", "risc-v", "differential-testing", "random", "assertions"],
+      "render_budget": {"max_lines": 10},
+      "evidence_refs": [{"source": "master_tex", "family": "verification"}],
+      "content_hash": "90f5858c105de8f2df29d584d5b38172a9af7f20d2baf4eb966d7c7ef2258ace"
+    },
+    {
+      "block_id": "jobagent_software_v1",
+      "project_id": "jobagent",
+      "display_name": "JobAgent",
+      "family": "software",
+      "eligible_families": ["software"],
+      "approved": true,
+      "immutable": true,
+      "source_master": "software",
+      "heading": "JobAgent",
+      "subtitle": "$\\mid$ Full-Stack Job Application Platform (FastAPI, React, SQLAlchemy)",
+      "dates": "May 2026 -- Jun 2026",
+      "bullets": [
+        "Piloted JobAgent with 10 beta users across 200 scored jobs and 500 generated CV packets, using feedback to refine job capture, scoring, and application workflows.",
+        "Built a FastAPI/SQLAlchemy platform with async packet generation, duplicate-run protection, progress polling, signed-token authentication, user isolation, quotas, and artifact validation.",
+        "Shipped a Chrome MV3 extension and React tracker for job capture, scoring, PDF preview/download, and status updates, backed by 192 automated pytest cases covering core workflows and security controls."
+      ],
+      "tags": ["software", "fastapi", "react", "sqlalchemy", "chrome-extension"],
+      "render_budget": {"max_lines": 10},
+      "evidence_refs": [{"source": "master_tex", "family": "software"}],
+      "content_hash": "228a6f7bc1a16c2118d2202a739dfc1852af599505a54f1b2f0ccadd512dec05"
+    },
+    {
+      "block_id": "agentic_rtl_security_discovery_software_v1",
+      "project_id": "agentic_rtl_security",
+      "display_name": "Agentic RTL Security Discovery",
+      "family": "software",
+      "eligible_families": ["software"],
+      "approved": true,
+      "immutable": true,
+      "source_master": "software",
+      "heading": "Agentic RTL Security Discovery",
+      "subtitle": "$\\mid$ Simulation and Test Automation Tooling (Python, SystemVerilog)",
+      "dates": "May 2026",
+      "bullets": [
+        "Built a Python/Icarus Verilog harness that executes generated MMIO traces against clean and bug-enabled RTL with oracle-gated validation.",
+        "Implemented an agentic loop for planning, generating, simulating, observing, refining, minimizing, and reporting verification tests.",
+        "Compared deterministic regression, random fuzzing, and LLM-assisted discovery across bug detection, reproducibility, and manual effort."
+      ],
+      "tags": ["software", "python", "automation", "simulation", "verification-tools"],
+      "render_budget": {"max_lines": 10},
+      "evidence_refs": [{"source": "master_tex", "family": "software"}],
+      "content_hash": "25fa71aa37629e9ee5039c157fef44c852b58747d939659e26278aae3a71fcdc"
+    },
+    {
+      "block_id": "sparrowml_software_v1",
+      "project_id": "sparrowml",
+      "display_name": "SparrowML",
+      "family": "software",
+      "eligible_families": ["software"],
+      "approved": true,
+      "immutable": true,
+      "source_master": "software",
+      "heading": "SparrowML",
+      "subtitle": "$\\mid$ ML Compiler and Runtime Toolchain (Python, C, PyTorch)",
+      "dates": "May 2026 -- Jun 2026",
+      "bullets": [
+        "Built a modular pipeline for model training, INT8 quantization, tensor serialization, C runtime generation, and deterministic target packaging.",
+        "Generated code, packed tensor layouts, and workloads for scalar, dense-vector, sparse-vector, and multicore RISC-V execution.",
+        "Added reproducible evaluation and benchmarking across prediction quality, cycles, memory traffic, vector utilization, and multicore scaling."
+      ],
+      "tags": ["software", "compiler", "runtime", "python", "c", "ml-systems"],
+      "render_budget": {"max_lines": 10},
+      "evidence_refs": [{"source": "master_tex", "family": "software"}],
+      "content_hash": "a386cb6c20e6373c30c7ee2ec984013cf95f249af1fbe90c639b63ed1f9d404b"
+    },
+    {
+      "block_id": "dementia_speech_classification_ml_v1",
+      "project_id": "dementia_speech_classification",
+      "display_name": "Dementia Speech Classification",
+      "family": "ml",
+      "eligible_families": ["ml"],
+      "approved": true,
+      "immutable": true,
+      "source_master": "ml",
+      "heading": "Dementia Speech Classification",
+      "subtitle": "$\\mid$ Multimodal ML Pipeline (Python, PyTorch)",
+      "dates": "Mar 2026 -- Jun 2026",
+      "bullets": [
+        "Built a multimodal pipeline combining TF-IDF linguistic features, HuBERT acoustic embeddings, and structured LLM-derived semantic features.",
+        "Improved held-out performance to 0.926 AUROC, 0.854 F1, and 0.879 accuracy using calibrated late fusion, with 0.963 AUROC on a blind evaluation set.",
+        "Developed reproducible feature extraction, model comparison, threshold analysis, error analysis, and blind-evaluation workflows."
+      ],
+      "tags": ["ml", "speech", "pytorch", "evaluation", "feature-engineering"],
+      "render_budget": {"max_lines": 10},
+      "evidence_refs": [{"source": "master_tex", "family": "ml"}],
+      "content_hash": "5c19e9bd250ce89a2e8f1a4e6c8824e7ace351846d189ef0f6b179ed0d2b254c"
+    },
+    {
+      "block_id": "sparrowml_ml_v1",
+      "project_id": "sparrowml",
+      "display_name": "SparrowML",
+      "family": "ml",
+      "eligible_families": ["ml", "digital_ic"],
+      "approved": true,
+      "immutable": true,
+      "source_master": "ml",
+      "heading": "SparrowML",
+      "subtitle": "$\\mid$ Hardware-Aware Edge ML Compiler and Runtime (Python, C, PyTorch)",
+      "dates": "May 2026 -- Jun 2026",
+      "bullets": [
+        "Built a WISDM activity-recognition pipeline spanning PyTorch training, INT8 quantization, tensor serialization, C runtime generation, and RTL execution.",
+        "Achieved 0.920 INT8 macro-F1 with a 0.009 drop from FP32 and 98.7\\% agreement with floating-point predictions.",
+        "Benchmarked scalar, dense-vector, 2:4 sparse-vector, and multicore targets across accuracy, cycles, memory traffic, operations skipped, and utilization."
+      ],
+      "tags": ["ml", "compiler", "runtime", "pytorch", "quantization", "edge"],
+      "render_budget": {"max_lines": 10},
+      "evidence_refs": [{"source": "master_tex", "family": "ml"}],
+      "content_hash": "15675e3c37b63847f1458854a64c15b86df41262a986c45392fde0e6af4f3bfc"
+    },
+    {
+      "block_id": "speakup_ml_v1",
+      "project_id": "speakup",
+      "display_name": "SpeakUp",
+      "family": "ml",
+      "eligible_families": ["ml"],
+      "approved": true,
+      "immutable": true,
+      "source_master": "ml",
+      "heading": "SpeakUp",
+      "subtitle": "$\\mid$ Quantized Edge Vision System (Python, TensorFlow Lite, C++)",
+      "dates": "Oct 2024 -- Apr 2025",
+      "bullets": [
+        "Fine-tuned and quantized a MobileNetV2-based visual recognition model for real-time deployment on constrained edge hardware.",
+        "Achieved approximately 91\\% recognition accuracy, 18 FPS throughput, and 180 ms end-to-end latency through model and pipeline optimization.",
+        "Built the capture, preprocessing, inference, and output pipeline while profiling CPU, memory, latency, and power constraints."
+      ],
+      "tags": ["ml", "computer-vision", "tensorflow-lite", "quantization", "edge"],
+      "render_budget": {"max_lines": 10},
+      "evidence_refs": [{"source": "master_tex", "family": "ml"}],
+      "content_hash": "4f18e3cce3b043174d10f6da49b214c0e1c9c12717f2c49b1b765c779d3787ed"
+    }
+  ]
+}

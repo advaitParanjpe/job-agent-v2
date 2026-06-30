@@ -1,0 +1,93 @@
+\documentclass[10pt,letterpaper]{article}
+\usepackage[margin=0.45in]{geometry}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{setspace}
+\setstretch{1.07}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\tabcolsep}{0pt}
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\titlespacing*{\section}{0pt}{6pt}{4pt}
+\newcommand{\resumeItem}[1]{\item #1}
+\newcommand{\resumeExpHeading}[3]{% 
+  \begin{tabularx}{\textwidth}{X r}
+    \textbf{#1} $\mid$ \textit{#2} & #3 \\
+  \end{tabularx}\vspace{0pt}
+}
+\newcommand{\resumeEduHeading}[3]{% 
+  \begin{tabularx}{\textwidth}{X r}
+    \textbf{#1} $\mid$ \textit{#2} & #3 \\
+  \end{tabularx}\vspace{0pt}
+}
+\newcommand{\resumeProjectHeading}[3]{% 
+  \begin{tabularx}{\textwidth}{X r}
+    \textbf{#1} \textit{#2} & #3 \\
+  \end{tabularx}\vspace{0pt}
+}
+\newenvironment{resumeItemList}{\begin{small}\begin{itemize}[leftmargin=*, itemsep=2pt, topsep=3pt, parsep=0pt]}{\end{itemize}\end{small}\vspace{4pt}}
+\begin{document}
+\begin{tabularx}{\textwidth}{@{}X r@{}}
+    {\fontsize{18}{28}\selectfont \textbf{Advait Paranjpe}} & \href{mailto:advait_paranjpe@outlook.com}{Email: advait\_paranjpe@outlook.com} \\[-1pt]
+    \href{https://github.com/AdvaitParanjpe}{GitHub: github.com/AdvaitParanjpe} & Mobile: +1 (213) 284-9936 \\[-1pt]
+    \href{https://linkedin.com/in/advait-paranjpe}{LinkedIn: linkedin.com/in/advait-paranjpe} & \href{https://advaitparanjpe.com}{Website: advaitparanjpe.com}
+\end{tabularx}
+\vspace{3pt}
+\section*{Education}
+\resumeEduHeading{University of California, Los Angeles}{M.S. in Electrical and Computer Engineering}{Sep 2025 -- Dec 2026}
+\begin{resumeItemList}
+    \resumeItem{Coursework: CPU/GPU Architecture, Memory Systems, Cache Coherence, Interconnect Design.}
+    \resumeItem{GPA: 3.7/4.0}
+\end{resumeItemList}
+\resumeEduHeading{The University of Manchester}{B.Eng. in Electrical and Electronic Engineering}{Sep 2022 -- Jul 2025}
+\begin{resumeItemList}
+    \resumeItem{Dissertation: ``Cascaded PLL Microwave Synthesizer for 5G systems.''}
+    \resumeItem{\textbf{First Class Honours} -- highest UK degree classification.}
+\end{resumeItemList}
+\section*{Experience}
+\resumeExpHeading{Jaguar Land Rover North America}{Incoming Semiconductor Applications Engineering Intern}{Jul 2026 -- Sep 2026}
+\resumeExpHeading{VAST Lab, UCLA}{Student Researcher -- GPU/FPGA Acceleration}{Jan 2026 -- Mar 2026}
+\begin{resumeItemList}
+    \resumeItem{Profiled ROCm attention kernels and memory bottlenecks to identify FPGA acceleration opportunities for Engram LLM inference.}
+    \resumeItem{Modeled FPGA cache architectures, increasing projected hit rate from $\sim$5\% at 256 entries to $\sim$48\% with a 64k-entry, 4-way design.}
+    \resumeItem{Translated workload profiling into FPGA tradeoffs across cache capacity, lookup throughput, locality, and on-chip memory usage.}
+\end{resumeItemList}
+\resumeExpHeading{NESO / National Grid ESO}{Software Engineering Intern (two summers)}{Jul 2024 -- Sep 2025}
+\begin{resumeItemList}
+    \resumeItem{Re-architected a 100k+ LOC simulation engine through vectorization and pipeline optimization, cutting runtime by 10x.}
+    \resumeItem{Optimized 100M+ records through chunked, memory-efficient execution, cutting RAM from 32 GB to 16 GB and runtime by 11x.}
+    \resumeItem{Reduced CPU context-switching overhead through parallel API batching and staged processing, increasing throughput by 24x for time-sensitive market telemetry.}
+\end{resumeItemList}
+\section*{Projects}
+\resumeProjectHeading{AXI4-Stream Packet Router}{$\mid$ RTL Design and UVM Verification (SystemVerilog, UVM)}{Jun 2026}
+\begin{resumeItemList}
+    \resumeItem{Designed and verified a 2-input, 4-output AXI4-Stream packet router with store-and-forward buffers, round-robin arbitration, packet locking, backpressure, and malformed-packet dropping.}
+    \resumeItem{Built conventional and UVM environments with reusable agents/BFMs, monitors, independent reference models, scoreboards, protocol checks, virtual sequences, and explicit scenario coverage.}
+    \resumeItem{Passed 32 deterministic closure seeds across conventional and UVM regressions, covering all input--destination pairs, contention, stalls, resets, drop modes, counter wrap, and head-of-line blocking.}
+\end{resumeItemList}
+\resumeProjectHeading{Agentic RTL Security}{$\mid$ Evidence-Gated SoC Bug Discovery (SystemVerilog, Python)}{May 2026}
+\begin{resumeItemList}
+    \resumeItem{Created a mini-SoC with ten seeded RTL/security bugs spanning MMIO, privilege checks, state handling, and protocol behavior.}
+    \resumeItem{Built deterministic directed tests, random fuzzing, clean-versus-bug simulation oracles, and reproducible failure artifacts; the baseline regression detected all 10 seeded bugs.}
+    \resumeItem{Implemented trace generation, failure minimization, and evidence-backed reporting to compare conventional and LLM-assisted verification workflows.}
+\end{resumeItemList}
+\resumeProjectHeading{Sparrow-V Verification}{$\mid$ RISC-V Differential and Random Verification (SystemVerilog, C, Python)}{Mar 2026 -- Jun 2026}
+\begin{resumeItemList}
+    \resumeItem{Developed differential testing against a reference model for RV32I execution, custom vector operations, retirement behavior, and scalar-vector command/completion semantics.}
+    \resumeItem{Verified stalls, dependencies, redirects, subword accesses, misalignment traps, exceptions, backpressure, and precise retirement through randomized campaigns and focused regressions.}
+    \resumeItem{Added assertions, cycle/retirement tracing, golden C/Python models, and a 500-seed confidence campaign for deterministic verification closure.}
+\end{resumeItemList}
+\vspace{-0.5em}
+\section*{Skills}
+\begin{resumeItemList}
+    \resumeItem{\textbf{Verification:} SystemVerilog testbenches, UVM, SVA, scoreboards, functional coverage, constrained-random testing, protocol checking, and regression automation.}
+    \resumeItem{\textbf{Methods:} Differential testing, reference models, fuzzing, failure minimization, waveform triage, assertions, coverage-driven regression, and scenario analysis.}
+    \resumeItem{\textbf{Tools and Languages:} SystemVerilog, Verilog, Python, C/C++, Verilator, Icarus Verilog, GTKWave, Vivado, Yosys, Git, Linux.}
+\end{resumeItemList}
+\end{document}

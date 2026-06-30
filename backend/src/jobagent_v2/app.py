@@ -1,4 +1,4 @@
-"""Backend bootstrap surface for Phase 0B checks."""
+"""Backend package metadata used by repository checks."""
 
 from typing import Final, TypedDict
 
@@ -10,7 +10,7 @@ class AppMetadata(TypedDict):
 
 
 APP_NAME: Final[str] = "jobagent-v2"
-BOOTSTRAP_PHASE: Final[str] = "phase-1"
+BOOTSTRAP_PHASE: Final[str] = "phase-5"
 
 
 def create_app_metadata() -> AppMetadata:

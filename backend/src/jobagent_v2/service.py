@@ -1,4 +1,4 @@
-"""Application service layer for Phase 1 API actions."""
+"""Application service layer for local API actions."""
 
 from __future__ import annotations
 
@@ -6,9 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from jobagent_v2.promotion import PromotionConfig, PromotionScheduler, q2_eligibility
-from jobagent_v2.schemas import parse_capture_payload
+from jobagent_v2.regeneration_worker import ReviewRegenerationWorker
+from jobagent_v2.schemas import (
+    parse_capture_payload,
+    parse_review_creation_payload,
+    parse_review_resolution_payload,
+)
 from jobagent_v2.storage import DuplicateActivePacketError, Repository, summarize_job
-from jobagent_v2.workers import DummyQ1Worker, DummyQ2Worker
+from jobagent_v2.workers import Queue1Worker, Queue2Worker
 
 
 class JobService:
@@ -48,7 +53,7 @@ class JobService:
         return {"semantic_assessment": self.repository.get_semantic_assessment(job_id)}
 
     def rescore(self, job_id: str) -> dict[str, Any]:
-        return {"job": DummyQ1Worker(self.repository).rescore(job_id)}
+        return {"job": Queue1Worker(self.repository).rescore(job_id)}
 
     def generate_now(self, job_id: str) -> dict[str, Any]:
         try:
@@ -88,8 +93,77 @@ class JobService:
     def get_packet(self, packet_id: str) -> dict[str, Any]:
         return {"packet": self.repository.get_packet(packet_id)}
 
-    def packet_artifact(self, packet_id: str, field: str) -> Path:
+    def list_reviews(
+        self,
+        *,
+        owner_id: str = "local",
+        status: str | None = "pending",
+        review_type: str | None = None,
+        family: str | None = None,
+        job_id: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "reviews": self.repository.list_reviews(
+                owner_id=owner_id,
+                status=status,
+                review_type=review_type,
+                family=family,
+                job_id=job_id,
+            )
+        }
+
+    def get_review(self, review_id: str, *, owner_id: str = "local") -> dict[str, Any]:
+        review = self.repository.get_review(review_id, owner_id=owner_id)
+        self._attach_review_packets(review)
+        return {"review": review}
+
+    def create_review(
+        self,
+        job_id: str,
+        payload: Any,
+        *,
+        owner_id: str = "local",
+    ) -> dict[str, Any]:
+        request = parse_review_creation_payload(payload)
+        return {
+            "review": self.repository.create_manual_review(
+                job_id,
+                owner_id=owner_id,
+                review_type=request["review_type"],
+                reason=request["reason"],
+            )
+        }
+
+    def resolve_review(
+        self,
+        review_id: str,
+        payload: Any,
+        *,
+        owner_id: str = "local",
+    ) -> dict[str, Any]:
+        resolution = parse_review_resolution_payload(payload)
+        review = self.repository.resolve_review(
+                review_id,
+                resolution,
+                owner_id=owner_id,
+            )
+        self._attach_review_packets(review)
+        return {"review": review}
+
+    def export_review_feedback(self, *, owner_id: str = "local") -> dict[str, Any]:
+        return {"feedback": self.repository.export_review_feedback(owner_id=owner_id)}
+
+    def packet_artifact(
+        self,
+        packet_id: str,
+        field: str,
+        *,
+        owner_id: str = "local",
+    ) -> Path:
         packet = self.repository.get_packet(packet_id)
+        job = self.repository.get_job(str(packet["job_id"]))
+        if job["owner_id"] != owner_id:
+            raise FileNotFoundError("packet artifact is unavailable")
         raw = packet.get(field)
         if not raw:
             raise FileNotFoundError("packet artifact is unavailable")
@@ -118,9 +192,28 @@ class JobService:
         return {"job": self.repository.retry_job(job_id)}
 
     def run_q1_once(self) -> dict[str, Any]:
-        job = DummyQ1Worker(self.repository).process_next()
+        job = Queue1Worker(self.repository).process_next()
         return {"processed": job is not None, "job": job}
 
     def run_q2_once(self) -> dict[str, Any]:
-        job = DummyQ2Worker(self.repository, self.artifact_root).process_next()
+        job = Queue2Worker(self.repository, self.artifact_root).process_next()
         return {"processed": job is not None, "job": job}
+
+    def run_regeneration_once(self) -> dict[str, Any]:
+        worker = ReviewRegenerationWorker(self.repository, self.artifact_root)
+        worker.recover_stale()
+        job = worker.process_next()
+        return {"processed": job is not None, "regeneration_job": job}
+
+    def _attach_review_packets(self, review: dict[str, Any]) -> None:
+        resolution = review.get("resolution") or {}
+        source_packet_id = resolution.get("source_packet_id") or review.get("packet_id")
+        regeneration_packet_id = resolution.get("regeneration_packet_id")
+        review["original_packet"] = (
+            self.repository.get_packet(str(source_packet_id)) if source_packet_id else None
+        )
+        review["reviewed_packet"] = (
+            self.repository.get_packet(str(regeneration_packet_id))
+            if regeneration_packet_id else None
+        )
+        review["current_preferred_packet"] = review["reviewed_packet"] or review["original_packet"]

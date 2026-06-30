@@ -107,8 +107,8 @@ def test_list_and_detail_use_canonical_completed_intake_field_names(
         assert job["title"] == "Senior RTL Engineer"
         assert job["location"] == "Austin, TX"
         assert job["jd_quality_band"] == "usable_with_warnings"
-        assert job["role_family"] == "RTL / ASIC Design"
-        assert job["selected_cv_family"] == "hardware_rtl"
+        assert job["role_family"] == "Digital IC / RTL Design"
+        assert job["selected_cv_family"] == "digital_ic"
 
 
 def test_invalid_request_rejection(service: JobService) -> None:

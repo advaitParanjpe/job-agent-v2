@@ -1,4 +1,4 @@
-"""CLI entrypoint for running the local Phase 1 API server."""
+"""CLI entrypoint for running the local JobAgent V2 API server."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def start_promotion_loop(server) -> threading.Event | None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run JobAgent V2 Phase 1 API server")
+    parser = argparse.ArgumentParser(description="Run the local JobAgent V2 API server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--db-path", default="data/jobagent_v2.sqlite3")
