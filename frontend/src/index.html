@@ -10,6 +10,15 @@
     <main>
       <h1>JobAgent V2</h1>
       <p><button id="process-intake-queue" type="button">Process intake queue</button></p>
+      <section aria-labelledby="workers-heading" class="worker-section">
+        <div class="section-heading">
+          <h2 id="workers-heading">Worker status</h2>
+          <p>Monitor local queue workers and stale-work warnings.</p>
+        </div>
+        <p><button id="refresh-workers" type="button">Refresh workers</button></p>
+        <div id="workers-status" class="status-line" role="status"></div>
+        <div id="workers-list" class="worker-list"></div>
+      </section>
       <section aria-labelledby="reviews-heading" class="review-section">
         <div class="section-heading">
           <h2 id="reviews-heading">Review queue</h2>

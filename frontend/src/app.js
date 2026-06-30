@@ -91,6 +91,10 @@ async function fetchReview(reviewId, fetchImpl = fetch) {
   return apiRequest(`/api/reviews/${reviewId}`, {}, fetchImpl);
 }
 
+async function fetchWorkerStatus(fetchImpl = fetch) {
+  return apiRequest("/api/workers/status", {}, fetchImpl);
+}
+
 async function resolveReview(reviewId, payload, fetchImpl = fetch) {
   return apiRequest(
     `/api/reviews/${reviewId}/resolve`,
@@ -317,6 +321,52 @@ function renderReviewQueue(reviews, container, onSelect = loadReviewDetail) {
     list.appendChild(article);
   }
   container.appendChild(list);
+}
+
+function renderWorkerStatus(data, container) {
+  container.textContent = "";
+  const queues = data.queues || {};
+  const health = data.queue_health || {};
+  const workers = data.workers || [];
+  for (const type of ["q1", "q2", "regeneration"]) {
+    const card = document.createElement("article");
+    card.className = "worker-card";
+    const heading = document.createElement("h3");
+    heading.textContent = workerLabel(type);
+    card.appendChild(heading);
+    const queue = queues[type] || {};
+    const queueHealth = health[type] || {};
+    const instances = workers.filter((worker) => worker.worker_type === type);
+    card.appendChild(detailLine("State", displayValue(queueHealth.health, "offline")));
+    card.appendChild(detailLine("Queued", displayValue(queue.queued_count, "0")));
+    card.appendChild(detailLine("Processing", displayValue(queue.processing_count, "0")));
+    card.appendChild(detailLine("Failed", displayValue(queue.failed_count, "0")));
+    card.appendChild(detailLine("Oldest queued age", secondsLabel(queueHealth.oldest_queued_age_seconds)));
+    card.appendChild(detailLine("Healthy workers", displayValue(queueHealth.healthy_worker_count, "0")));
+    const active = instances.find((worker) => worker.current_job_id);
+    card.appendChild(detailLine("Current job", active ? active.current_job_id : "-"));
+    const latest = instances[0] || {};
+    card.appendChild(detailLine("Last success", displayValue(latest.last_success_at)));
+    card.appendChild(detailLine("Last failure", displayValue(latest.last_failure_at)));
+    const warnings = queueHealth.warnings || [];
+    card.appendChild(detailLine("Warnings", warnings.length ? warnings.join(", ") : "-"));
+    container.appendChild(card);
+  }
+}
+
+function workerLabel(type) {
+  return {
+    q1: "Queue 1",
+    q2: "Queue 2",
+    regeneration: "Regeneration",
+  }[type] || displayValue(type);
+}
+
+function secondsLabel(value) {
+  if (value === null || value === undefined) return "-";
+  const seconds = Math.round(Number(value));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 function renderReviewDetail(review, container, onResolve = submitReviewResolution) {
@@ -713,6 +763,21 @@ async function refreshReviews() {
   }
 }
 
+async function refreshWorkers() {
+  const container = document.querySelector("#workers-list");
+  const status = document.querySelector("#workers-status");
+  if (!container) return;
+  setStatus(status, "Loading worker status...");
+  try {
+    const data = await fetchWorkerStatus();
+    renderWorkerStatus(data, container);
+    setStatus(status, "Worker status loaded.");
+  } catch (error) {
+    container.textContent = "";
+    setStatus(status, `Worker status unavailable: ${error.message || error}`);
+  }
+}
+
 async function loadReviewDetail(reviewId) {
   const container = document.querySelector("#review-detail");
   const status = document.querySelector("#reviews-status");
@@ -778,15 +843,28 @@ function bindReviewFilters() {
   });
 }
 
+function bindWorkerRefresh() {
+  const button = document.querySelector("#refresh-workers");
+  if (!button) return;
+  button.addEventListener("click", async () => {
+    await refreshWorkers();
+  });
+}
+
 if (typeof document !== "undefined") {
   bindIntakeQueueAction();
   bindReviewFilters();
+  bindWorkerRefresh();
   refreshDashboard().catch((error) => {
     const tbody = document.querySelector("#jobs-body");
     if (tbody) tbody.textContent = String(error.message || error);
   });
   refreshReviews().catch((error) => {
     const status = document.querySelector("#reviews-status");
+    setStatus(status, String(error.message || error));
+  });
+  refreshWorkers().catch((error) => {
+    const status = document.querySelector("#workers-status");
     setStatus(status, String(error.message || error));
   });
 }
@@ -803,6 +881,7 @@ globalThis.JobAgentV2Dashboard = {
   displayValue,
   fetchReview,
   fetchReviews,
+  fetchWorkerStatus,
   intakeStatusLabel,
   ownerHeaders,
   packetSummary,
@@ -811,5 +890,7 @@ globalThis.JobAgentV2Dashboard = {
   renderJobs,
   renderReviewDetail,
   renderReviewQueue,
+  renderWorkerStatus,
   resolveReview,
+  secondsLabel,
 };

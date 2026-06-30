@@ -412,6 +412,52 @@ Important limitations:
 - Real TeX compilation quality is still environment-dependent, with failures
   reported honestly instead of falling back to an unreviewed packet.
 
+### Operational Worker Scheduling and Monitoring
+Completion date: 2026-06-30.
+
+Relevant commit:
+- Not committed at the time of this audit.
+
+Main functionality delivered:
+- Added `jobagent_v2.worker_runner` with independent continuous loops for
+  `q1`, `q2`, and `regeneration`, plus combined `--all` mode.
+- Kept worker loops as wrappers around existing run-once worker logic; Q1, Q2,
+  and regeneration business behavior was not reimplemented.
+- Added environment-backed polling intervals, deterministic idle backoff,
+  heartbeat settings, and graceful SIGINT/SIGTERM stop handling.
+- Added durable `worker_instances` and `worker_events` tables for current
+  worker state, bounded operational history, processed/failure counts,
+  heartbeat timestamps, current job, last success/failure, polling interval,
+  and runner version.
+- Added queue summaries derived from existing `jobs`, `q2_tasks`, and
+  `review_regeneration_jobs`, including queued/processing/failed counts,
+  retryable counts, oldest queued item, stale processing counts, and
+  max-attempt-exhausted counts where applicable.
+- Added worker health and queue health API responses for healthy, idle,
+  degraded, and offline states.
+- Added compact dashboard worker monitoring with Q1, Q2, and regeneration
+  status, queue counts, stale/failure warnings, current job, and last
+  success/failure.
+- Added safe JSON operational logs for worker start/stop, idle/backoff,
+  job start, completion, and failure without CV content, full JDs, review
+  notes, secrets, stack traces, or raw artifact paths.
+- Documented startup commands, polling configuration, lifecycle, health rules,
+  queue metrics, structured logs, manual controls, stale recovery, and
+  troubleshooting in `docs/worker_operations.md`.
+
+Validation evidence:
+- `PYTHONPATH=backend/src pytest backend/tests/unit/test_worker_runner.py backend/tests/contract/test_api_contract.py -q`: 14 passed.
+- `node frontend/scripts/test-dashboard.mjs`: passed.
+- `python3 scripts/check.py`: 184 backend tests passed, 2 local TeX compile tests skipped, plus frontend and extension checks.
+- `git diff --check`: passed.
+- `git status --short`: inspected.
+
+Important limitations:
+- The `--all` runner is a simple local loop, not a supervised process manager.
+- HTTP endpoints expose status and manual run-once controls but do not spawn
+  arbitrary worker processes.
+- Packaging and one-command startup remain future release-hardening work.
+
 ## Major architectural decisions
 
 ### Canonical CV Tailoring

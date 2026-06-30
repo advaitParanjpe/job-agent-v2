@@ -5,100 +5,101 @@
 packet-generation system: capture job postings from a browser, store and
 deduplicate them, run deterministic intake and scoring, promote suitable jobs
 into packet generation, render approved canonical CV packets, process reviewed
-packet outcomes, and expose the workflow through a local API, dashboard, and
-Chrome extension.
+packet outcomes, and expose the workflow through a local API, dashboard,
+Chrome extension, and local worker loops.
 
 ## Current Verified State
 - Capture, dedupe, deterministic intake, four-family classification,
   candidate-fit scoring, promotion, approved master-CV packet generation,
   bounded one-block tailoring, calibration evaluation, backend review APIs,
-  minimal dashboard review workflow, and review-driven packet regeneration are
-  implemented.
+  minimal dashboard review workflow, review-driven packet regeneration, and
+  operational worker scheduling/monitoring are implemented.
 - Supported CV families remain `digital_ic`, `verification`, `software`, and
   `ml`.
 - Canonical master CVs and approved project-block text are immutable.
 - Tailoring remains bounded to at most one approved whole-project substitution.
-- Classification, tailoring, review decisions, regeneration jobs, and packet
-  attempts are persisted separately for auditability.
-- Packet-changing review resolutions now create durable regeneration jobs.
+- Classification, tailoring, review decisions, regeneration jobs, worker
+  status, and packet attempts are persisted separately for auditability.
+- Q1, Q2, and review-regeneration workers can run continuously through
+  `jobagent_v2.worker_runner`.
+- Worker/queue health is visible through local API endpoints and the dashboard.
 - Successful reviewed outcomes create linked packet artifacts; previous ready
   packets remain available.
 - Optional semantic evidence remains opt-in; standard validation is offline and
   deterministic.
 
 ## Recently Completed Milestone
-Phase H: Review-Driven Packet Regeneration Worker.
+Operational Worker Scheduling and Monitoring.
 
 Final status: COMPLETE.
 
 Completion evidence:
-- Added durable `review_regeneration_jobs` with queued, processing, complete,
-  and failed states; lease owner/expiry; attempt counts; queued/started/
-  completed/failed timestamps; safe failure code/reason; source packet; and
-  generated packet linkage.
-- Added reviewed packet metadata on `packets`: generation kind, source packet,
-  review item, review resolution, idempotency key, and generation reason.
-- Implemented `jobagent_v2.regeneration_worker` with atomic SQLite claiming,
-  stale lease recovery, max-attempt retry policy, idempotent success reuse, and
-  safe failure recording.
-- Implemented reviewed family-master regeneration by copying approved master
-  `.tex` and `.pdf` artifacts unchanged into a new packet directory.
-- Implemented reviewed one-block project regeneration by revalidating approved
-  blocks, replacing only the Projects section, validating immutable sections,
-  validating one-page PDF output, and promoting artifacts only after checks
-  pass.
-- Preserved previous valid packet artifacts and original automated
-  classification/tailoring/review records.
-- Exposed regeneration processing through
-  `POST /api/workers/regeneration/run-once` and
-  `PYTHONPATH=backend/src python3 -m jobagent_v2.regeneration_worker --once`.
-- Updated review API/dashboard status display for queued, processing, complete,
-  and failed regeneration states with prior/reviewed packet links.
-- Updated `docs/review_api.md` and `docs/bounded_tailoring.md`.
-- Validation passed on 2026-06-30: `python3 scripts/check.py` reported 177
+- Added `jobagent_v2.worker_runner` with independently runnable `q1`, `q2`,
+  and `regeneration` loops, plus combined `--all` mode.
+- Wrapped existing run-once worker logic rather than duplicating Q1, Q2, or
+  regeneration business behavior.
+- Added environment-backed polling intervals, deterministic idle backoff,
+  heartbeat settings, graceful SIGINT/SIGTERM handling, and per-job failure
+  isolation.
+- Added durable `worker_instances` and `worker_events` tables for current
+  status, bounded event history, current/last jobs, processed/failure counts,
+  heartbeats, and runner version.
+- Added queue summaries from existing `jobs`, `q2_tasks`, and
+  `review_regeneration_jobs`, including queued/processing/failed counts,
+  retryable counts, oldest queued timestamps, stale processing counts, and
+  retry-exhausted counts.
+- Added `GET /api/workers/status`, `GET /api/workers/{worker_type}/status`,
+  and `GET /api/workers/queues`.
+- Added compact dashboard worker monitoring for Q1, Q2, and regeneration
+  status, queue counts, stale/failure warnings, current job, and last
+  success/failure.
+- Added safe JSON operational logs that avoid CV content, full JDs, review
+  notes, secrets, stack traces, and raw artifact paths.
+- Added `docs/worker_operations.md` and updated API/README documentation.
+- Validation passed on 2026-06-30: `python3 scripts/check.py` reported 184
   backend tests passed, 2 local TeX compile tests skipped, plus frontend and
   extension checks.
 - `git diff --check` passed on 2026-06-30.
 - `git status --short` was inspected.
-- Final diff was inspected for credentials, unsafe paths, generated clutter,
-  accidental CV changes, and production database writes.
+- Final diff was inspected for secrets, PII in logs, unsafe paths, generated
+  clutter, accidental CV edits, and production database writes.
 
 ## Active Milestone
-Operational Worker Scheduling and Monitoring.
+End-to-end Release Hardening.
 
 ## Why This Milestone Is Next
-Phase H made reviewed packet regeneration real, but it is still triggered by a
-manual command or local API call. The next highest-leverage step is to make the
-existing Q1, Q2, and review-regeneration workers easier to run and observe
-locally without changing canonical CV policy or adding application submission
-features.
+The core local workflow now exists from capture through reviewed packet
+regeneration and operational worker monitoring. The next step should make that
+workflow easier to validate, install, and run reliably without changing the
+canonical CV policy or adding free-form generation.
 
 ## Scope
-- Document and/or add a single local worker loop command for Q1, Q2, promotion,
-  and review regeneration.
-- Expose concise local queue-health/status reporting for Q1, Q2, and review
-  regeneration.
-- Surface stale-job recovery counts and safe worker failure summaries.
-- Keep all processing local-only, deterministic, and compatible with isolated
-  test databases.
-- Preserve canonical master CVs, approved project blocks, review append-only
-  behavior, and packet artifact versioning.
+- Add or update end-to-end smoke documentation/checks for capture through
+  reviewed packet regeneration.
+- Verify package data for required JSON config, templates, master CVs,
+  frontend assets, and extension assets.
+- Clarify local setup checks for Python, Node, LaTeX, and optional live
+  semantic credentials.
+- Document local SQLite migration/backup expectations.
+- Document the CI-equivalent validation path around `python3 scripts/check.py`.
 
 ## Out Of Scope
 - Free-form CV generation or bullet rewriting.
 - Changing classifier/tailoring thresholds automatically.
-- Hosted services, credentials, production auth, paid integrations, or
-  deployment.
+- Production authentication or multi-user hardening.
+- Hosted services, credentials, paid integrations, or deployment.
 - Application submission workflow integration.
 - Broad dashboard redesign.
 
 ## Acceptance Criteria
-- [ ] A local operator can run or document one command that processes all
-      current local worker queues safely.
-- [ ] Queue-health/status output includes Q1, Q2, and review-regeneration
-      counts without exposing local filesystem paths.
-- [ ] Stale lease recovery is visible and deterministic in tests.
-- [ ] Existing Q1/Q2/regeneration APIs remain compatible.
+- [ ] A local operator can follow documented checks from API startup through
+      worker execution and reviewed packet regeneration.
+- [ ] Required package data is verified by tests or explicit checks.
+- [ ] Setup documentation covers Python, Node, LaTeX, worker loops, API,
+      dashboard, extension, and optional live semantic settings.
+- [ ] Local SQLite backup/migration guidance is documented.
+- [ ] Existing Q1/Q2/regeneration APIs and worker status APIs remain
+      compatible.
 - [ ] `python3 scripts/check.py` passes.
 - [ ] `git diff --check` passes.
 - [ ] `git status --short` is inspected.
@@ -116,15 +117,17 @@ git status --short
 - `project/current.md`
 - `project/roadmap.md`
 - `project/history.md`
-- `backend/src/jobagent_v2/workers.py`
-- `backend/src/jobagent_v2/regeneration_worker.py`
-- `backend/src/jobagent_v2/service.py`
-- `backend/src/jobagent_v2/api.py`
-- `backend/src/jobagent_v2/storage.py`
+- `README.md`
 - `docs/phase_1_api.md`
 - `docs/review_api.md`
+- `docs/worker_operations.md`
+- `scripts/check.py`
+- `pyproject.toml`
+- `backend/src/jobagent_v2/worker_runner.py`
+- `backend/src/jobagent_v2/storage.py`
+- `backend/src/jobagent_v2/api.py`
 - `frontend/src/app.js`
-- `frontend/scripts/test-dashboard.mjs`
+- `extension/`
 
 ## Decisions And Constraints
 - Source code, tests, and reproducible commands are stronger evidence than
@@ -137,10 +140,10 @@ git status --short
 - Do not begin implementation of this milestone unless explicitly requested.
 
 ## Known Risks
-- Long-running worker loops need careful shutdown behavior in local shells.
-- Queue health should avoid leaking artifact paths or stack traces.
-- Operational visibility should not become a broader dashboard redesign.
+- End-to-end smoke checks must use isolated databases and artifact roots.
+- Local TeX availability remains environment-dependent.
+- Release hardening should not drift into hosted deployment or auth work.
 
 ## Progress Log
-- 2026-06-30: Operational Worker Scheduling and Monitoring selected after
-  Phase H completion. No implementation started.
+- 2026-06-30: End-to-end Release Hardening selected after Operational Worker
+  Scheduling and Monitoring completion. No implementation started.

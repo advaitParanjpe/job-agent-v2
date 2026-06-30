@@ -207,6 +207,33 @@ and count toward `JOBAGENT_AUTO_PACKET_BUDGET`; manual Generate now does not.
 
 `GET /api/jobs/{job_id}/q2-task` returns the job's task or `null`.
 
+## Worker operations
+
+Continuous local workers can be started with:
+
+```bash
+PYTHONPATH=backend/src python3 -m jobagent_v2.worker_runner --worker q1
+PYTHONPATH=backend/src python3 -m jobagent_v2.worker_runner --worker q2
+PYTHONPATH=backend/src python3 -m jobagent_v2.worker_runner --worker regeneration
+PYTHONPATH=backend/src python3 -m jobagent_v2.worker_runner --all
+```
+
+Status endpoints:
+
+```http
+GET /api/workers/status
+GET /api/workers/q1/status
+GET /api/workers/q2/status
+GET /api/workers/regeneration/status
+GET /api/workers/queues
+```
+
+These endpoints return worker health, queue depth, oldest queued timestamps,
+stale-work counts, retry-exhausted counts, safe failure summaries, and safe
+configuration values. They do not expose stack traces, local artifact paths, or
+environment secrets. Full operational guidance is in
+`docs/worker_operations.md`.
+
 ## Phase 5 packet endpoints
 
 `GET /api/jobs/{job_id}/packet` returns the most recent packet attempt, including

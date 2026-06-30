@@ -4,6 +4,7 @@ import pytest
 
 from jobagent_v2.schemas import ValidationError
 from jobagent_v2.service import JobService
+from jobagent_v2.api import API_DOCUMENTATION
 from jobagent_v2.workers import DummyQ1Worker
 
 
@@ -114,6 +115,21 @@ def test_list_and_detail_use_canonical_completed_intake_field_names(
 def test_invalid_request_rejection(service: JobService) -> None:
     with pytest.raises(ValidationError):
         service.create_job({"url": "not enough"})
+
+
+def test_worker_status_contract(service: JobService, capture_payload: dict[str, str]) -> None:
+    service.create_job(capture_payload)
+
+    status = service.worker_status()
+    queues = service.queue_status()["queues"]
+
+    assert set(status["queues"]) == {"q1", "q2", "regeneration"}
+    assert status["queues"]["q1"]["queued_count"] == 1
+    assert status["queue_health"]["q1"]["health"] == "degraded"
+    assert queues["q1"]["queued_count"] == 1
+    assert "GET /api/workers/status" in API_DOCUMENTATION
+    assert "GET /api/workers/{worker_type}/status" in API_DOCUMENTATION
+    assert "GET /api/workers/queues" in API_DOCUMENTATION
 
 
 def test_phase3_score_and_block_score_response_schemas(service: JobService, repository) -> None:

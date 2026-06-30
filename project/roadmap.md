@@ -346,7 +346,7 @@ Required external input:
 ## Future milestones
 
 ### Operational worker scheduling and monitoring
-Status: active.
+Status: complete.
 
 Goal:
 - Make local Q1/Q2/regeneration worker execution observable and easy to run
@@ -357,6 +357,45 @@ Potential scope:
 - Add queue-health/status reporting for Q1, Q2, and review regeneration.
 - Add stale-job recovery visibility and concise operational logs.
 - Keep all processing local-only and deterministic.
+
+Delivered:
+- Added `jobagent_v2.worker_runner` with independently runnable `q1`, `q2`,
+  and `regeneration` loops plus combined `--all` mode.
+- Added environment-backed polling, deterministic idle backoff, heartbeat
+  persistence, graceful SIGINT/SIGTERM stop handling, and JSON operational logs.
+- Added durable worker instance and worker event status tables.
+- Added queue summaries and health diagnostics derived from `jobs`,
+  `q2_tasks`, and `review_regeneration_jobs`.
+- Added worker status APIs and a compact dashboard Worker status section.
+- Documented startup commands, health rules, queue metrics, logging, stale
+  recovery, and troubleshooting in `docs/worker_operations.md`.
+
+Validation evidence:
+- `python3 scripts/check.py` passed on 2026-06-30 with 184 backend tests passed,
+  2 local TeX compile tests skipped, plus frontend and extension checks.
+- `git diff --check` passed on 2026-06-30.
+
+Important limitations:
+- The local `--all` runner is intentionally simple and not a process manager.
+- It does not spawn worker processes from the HTTP API.
+- Packaging and one-command local startup remain future release-hardening work.
+
+### End-to-end release hardening
+Status: active.
+
+Goal:
+- Make the local capture-to-reviewed-packet workflow easier to validate and
+  prepare for release without changing canonical CV content policy.
+
+Potential scope:
+- End-to-end smoke documentation and checks from capture through reviewed
+  packet regeneration.
+- Package-data verification for required JSON, templates, master CVs, and
+  frontend/extension assets.
+- Clear local setup checks for Python, Node, LaTeX, and optional live semantic
+  credentials.
+- Migration/backup notes for local SQLite data.
+- CI-equivalent command documentation around `python3 scripts/check.py`.
 
 ### Deterministic one-page validation and fitting
 Status: not started.

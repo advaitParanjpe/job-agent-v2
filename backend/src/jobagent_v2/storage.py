@@ -24,7 +24,7 @@ from jobagent_v2.url_utils import normalize_url, source_site_from_url
 from jobagent_v2.util import utc_now_iso
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 REGENERATION_MAX_ATTEMPTS = 3
 REGENERATION_RETRYABLE_ERRORS = {
     "temporary_artifact_write_failure",
@@ -361,6 +361,47 @@ class Repository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_review_regen_status
                 ON review_regeneration_jobs(status, queued_at ASC);
+
+                CREATE TABLE IF NOT EXISTS worker_instances (
+                    instance_id TEXT PRIMARY KEY,
+                    worker_type TEXT NOT NULL,
+                    process_id INTEGER,
+                    hostname TEXT,
+                    state TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    last_heartbeat_at TEXT,
+                    stopped_at TEXT,
+                    current_job_id TEXT,
+                    last_claimed_job_id TEXT,
+                    last_completed_job_id TEXT,
+                    last_success_at TEXT,
+                    last_failure_at TEXT,
+                    last_failure_code TEXT,
+                    last_failure_reason TEXT,
+                    processed_count INTEGER NOT NULL DEFAULT 0,
+                    failure_count INTEGER NOT NULL DEFAULT 0,
+                    consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
+                    polling_interval_seconds REAL NOT NULL,
+                    version TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_worker_instances_type
+                ON worker_instances(worker_type, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS worker_events (
+                    id TEXT PRIMARY KEY,
+                    worker_type TEXT NOT NULL,
+                    instance_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    state TEXT,
+                    job_id TEXT,
+                    safe_code TEXT,
+                    message TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_worker_events_instance_created
+                ON worker_events(instance_id, created_at DESC);
                 """
             )
             connection.execute(
@@ -451,6 +492,205 @@ class Repository:
         for name, ddl in resolution_columns.items():
             if name not in resolution_existing:
                 connection.execute(f"ALTER TABLE review_resolutions ADD COLUMN {name} {ddl}")
+
+    def register_worker_instance(
+        self,
+        *,
+        worker_type: str,
+        instance_id: str,
+        process_id: int | None,
+        hostname: str | None,
+        polling_interval_seconds: float,
+        version: str,
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT OR REPLACE INTO worker_instances (
+                    instance_id, worker_type, process_id, hostname, state, started_at,
+                    last_heartbeat_at, stopped_at, current_job_id, last_claimed_job_id,
+                    last_completed_job_id, last_success_at, last_failure_at,
+                    last_failure_code, last_failure_reason, processed_count,
+                    failure_count, consecutive_failure_count, polling_interval_seconds,
+                    version, updated_at
+                )
+                VALUES (?, ?, ?, ?, 'starting', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL,
+                    NULL, NULL, 0, 0, 0, ?, ?, ?)""",
+                (
+                    instance_id,
+                    worker_type,
+                    process_id,
+                    hostname,
+                    now,
+                    now,
+                    polling_interval_seconds,
+                    version,
+                    now,
+                ),
+            )
+            self._insert_worker_event(
+                connection,
+                worker_type=worker_type,
+                instance_id=instance_id,
+                event_type="worker_start",
+                state="starting",
+                job_id=None,
+                safe_code=None,
+                message="Worker instance started.",
+                metadata={},
+            )
+            row = connection.execute(
+                "SELECT * FROM worker_instances WHERE instance_id = ?",
+                (instance_id,),
+            ).fetchone()
+        return row_to_worker_instance(row)
+
+    def update_worker_instance(
+        self,
+        *,
+        instance_id: str,
+        state: str,
+        current_job_id: str | None = None,
+        claimed_job_id: str | None = None,
+        completed_job_id: str | None = None,
+        failure_code: str | None = None,
+        failure_reason: str | None = None,
+        increment_processed: bool = False,
+        increment_failure: bool = False,
+        event_type: str | None = None,
+        message: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        safe_reason = _safe_failure_reason(failure_reason or "") if failure_reason else None
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM worker_instances WHERE instance_id = ?",
+                (instance_id,),
+            ).fetchone()
+            if row is None:
+                raise JobNotFoundError(instance_id)
+            connection.execute(
+                """UPDATE worker_instances SET state=?, last_heartbeat_at=?,
+                    current_job_id=?, last_claimed_job_id=COALESCE(?, last_claimed_job_id),
+                    last_completed_job_id=COALESCE(?, last_completed_job_id),
+                    last_success_at=CASE WHEN ? THEN ? ELSE last_success_at END,
+                    last_failure_at=CASE WHEN ? THEN ? ELSE last_failure_at END,
+                    last_failure_code=COALESCE(?, last_failure_code),
+                    last_failure_reason=COALESCE(?, last_failure_reason),
+                    processed_count=processed_count + ?,
+                    failure_count=failure_count + ?,
+                    consecutive_failure_count=CASE WHEN ? THEN 0
+                        ELSE consecutive_failure_count + ? END,
+                    updated_at=?
+                WHERE instance_id=?""",
+                (
+                    state,
+                    now,
+                    current_job_id,
+                    claimed_job_id,
+                    completed_job_id,
+                    int(increment_processed),
+                    now,
+                    int(increment_failure),
+                    now,
+                    failure_code,
+                    safe_reason,
+                    1 if increment_processed else 0,
+                    1 if increment_failure else 0,
+                    int(increment_processed),
+                    1 if increment_failure else 0,
+                    now,
+                    instance_id,
+                ),
+            )
+            updated = connection.execute(
+                "SELECT * FROM worker_instances WHERE instance_id = ?",
+                (instance_id,),
+            ).fetchone()
+            if event_type:
+                self._insert_worker_event(
+                    connection,
+                    worker_type=updated["worker_type"],
+                    instance_id=instance_id,
+                    event_type=event_type,
+                    state=state,
+                    job_id=current_job_id or claimed_job_id or completed_job_id,
+                    safe_code=failure_code,
+                    message=message or event_type,
+                    metadata=metadata or {},
+                )
+        return row_to_worker_instance(updated)
+
+    def stop_worker_instance(self, instance_id: str, *, state: str = "stopped") -> None:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM worker_instances WHERE instance_id = ?",
+                (instance_id,),
+            ).fetchone()
+            if row is None:
+                return
+            connection.execute(
+                """UPDATE worker_instances SET state=?, current_job_id=NULL,
+                stopped_at=?, last_heartbeat_at=?, updated_at=? WHERE instance_id=?""",
+                (state, now, now, now, instance_id),
+            )
+            self._insert_worker_event(
+                connection,
+                worker_type=row["worker_type"],
+                instance_id=instance_id,
+                event_type="worker_stop",
+                state=state,
+                job_id=None,
+                safe_code=None,
+                message="Worker instance stopped.",
+                metadata={},
+            )
+
+    def list_worker_instances(self, worker_type: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM worker_instances"
+        params: tuple[Any, ...] = ()
+        if worker_type:
+            query += " WHERE worker_type = ?"
+            params = (worker_type,)
+        query += " ORDER BY updated_at DESC"
+        with self.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [row_to_worker_instance(row) for row in rows]
+
+    def list_worker_events(self, *, limit: int = 25) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM worker_events ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [row_to_worker_event(row) for row in rows]
+
+    def queue_summaries(self, *, now: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            q1 = _queue_counts(
+                connection,
+                "jobs",
+                "intake_status",
+                queued="queued",
+                processing=("extracting", "structuring", "scoring"),
+                failed=("failed", "manual_review"),
+                queued_at_column="created_at",
+                stale_statuses=("extracting", "structuring", "scoring"),
+                stale_column="updated_at",
+                now=now,
+            )
+            q2 = _q2_queue_counts(connection, now=now)
+            regeneration = _regeneration_queue_counts(connection, now=now)
+        return {"q1": q1, "q2": q2, "regeneration": regeneration}
+
+    def worker_operational_status(self, *, now: str) -> dict[str, Any]:
+        return {
+            "workers": self.list_worker_instances(),
+            "queues": self.queue_summaries(now=now),
+            "events": self.list_worker_events(limit=25),
+        }
 
     def create_or_get_job(self, payload: CapturePayload) -> tuple[dict[str, Any], bool]:
         normalized_url = normalize_url(payload.url)
@@ -2104,6 +2344,39 @@ class Repository:
         )
         return review_id
 
+    def _insert_worker_event(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        worker_type: str,
+        instance_id: str,
+        event_type: str,
+        state: str | None,
+        job_id: str | None,
+        safe_code: str | None,
+        message: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        connection.execute(
+            """INSERT INTO worker_events (
+                id, worker_type, instance_id, event_type, state, job_id,
+                safe_code, message, metadata_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(uuid4()),
+                worker_type,
+                instance_id,
+                event_type,
+                state,
+                job_id,
+                safe_code,
+                message,
+                json.dumps(metadata, sort_keys=True),
+                utc_now_iso(),
+            ),
+        )
+
     def _review_detail(
         self,
         connection: sqlite3.Connection,
@@ -2577,6 +2850,47 @@ def row_to_regeneration_job(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def row_to_worker_instance(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "instance_id": row["instance_id"],
+        "worker_type": row["worker_type"],
+        "process_id": row["process_id"],
+        "hostname": row["hostname"],
+        "state": row["state"],
+        "started_at": row["started_at"],
+        "last_heartbeat_at": row["last_heartbeat_at"],
+        "stopped_at": row["stopped_at"],
+        "current_job_id": row["current_job_id"],
+        "last_claimed_job_id": row["last_claimed_job_id"],
+        "last_completed_job_id": row["last_completed_job_id"],
+        "last_success_at": row["last_success_at"],
+        "last_failure_at": row["last_failure_at"],
+        "last_failure_code": row["last_failure_code"],
+        "last_failure_reason": row["last_failure_reason"],
+        "processed_count": row["processed_count"],
+        "failure_count": row["failure_count"],
+        "consecutive_failure_count": row["consecutive_failure_count"],
+        "polling_interval_seconds": row["polling_interval_seconds"],
+        "version": row["version"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def row_to_worker_event(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "event_id": row["id"],
+        "worker_type": row["worker_type"],
+        "instance_id": row["instance_id"],
+        "event_type": row["event_type"],
+        "state": row["state"],
+        "job_id": row["job_id"],
+        "safe_code": row["safe_code"],
+        "message": row["message"],
+        "metadata": json.loads(row["metadata_json"]),
+        "created_at": row["created_at"],
+    }
+
+
 def row_to_block_score(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "job_id": row["job_id"], "block_id": row["block_id"], "block_type": row["block_type"],
@@ -2669,6 +2983,124 @@ def _safe_failure_reason(reason: str) -> str:
     text = str(reason).replace("\n", " ").strip()
     text = re.sub(r"(/[^\s]+)+", "[path]", text)
     return text[:300] or "Review regeneration failed."
+
+
+def _queue_counts(
+    connection: sqlite3.Connection,
+    table: str,
+    status_column: str,
+    *,
+    queued: str,
+    processing: tuple[str, ...],
+    failed: tuple[str, ...],
+    queued_at_column: str,
+    stale_statuses: tuple[str, ...],
+    stale_column: str,
+    now: str,
+) -> dict[str, Any]:
+    processing_marks = ",".join("?" for _ in processing)
+    failed_marks = ",".join("?" for _ in failed)
+    stale_marks = ",".join("?" for _ in stale_statuses)
+    queued_row = connection.execute(
+        f"SELECT count(*) AS count, min({queued_at_column}) AS oldest FROM {table} "
+        f"WHERE {status_column} = ?",
+        (queued,),
+    ).fetchone()
+    processing_row = connection.execute(
+        f"SELECT count(*) AS count FROM {table} WHERE {status_column} IN ({processing_marks})",
+        processing,
+    ).fetchone()
+    failed_row = connection.execute(
+        f"SELECT count(*) AS count FROM {table} WHERE {status_column} IN ({failed_marks})",
+        failed,
+    ).fetchone()
+    stale_row = connection.execute(
+        f"SELECT count(*) AS count FROM {table} WHERE {status_column} IN ({stale_marks}) "
+        f"AND {stale_column} < datetime(?, '-15 minutes')",
+        (*stale_statuses, now),
+    ).fetchone()
+    return {
+        "queued_count": int(queued_row["count"]),
+        "processing_count": int(processing_row["count"]),
+        "failed_count": int(failed_row["count"]),
+        "retryable_count": int(failed_row["count"]),
+        "oldest_queued_at": queued_row["oldest"],
+        "stale_processing_count": int(stale_row["count"]),
+    }
+
+
+def _q2_queue_counts(connection: sqlite3.Connection, *, now: str) -> dict[str, Any]:
+    queued = connection.execute(
+        "SELECT count(*) AS count, min(created_at) AS oldest FROM q2_tasks "
+        "WHERE status = 'queued'"
+    ).fetchone()
+    processing = connection.execute(
+        "SELECT count(*) AS count FROM q2_tasks WHERE status IN ('claimed', 'running')"
+    ).fetchone()
+    failed = connection.execute(
+        "SELECT count(*) AS count FROM q2_tasks WHERE status = 'failed'"
+    ).fetchone()
+    stale = connection.execute(
+        "SELECT count(*) AS count FROM q2_tasks WHERE status IN ('claimed', 'running') "
+        "AND lease_expires_at IS NOT NULL AND lease_expires_at < ?",
+        (now,),
+    ).fetchone()
+    exhausted = connection.execute(
+        "SELECT count(*) AS count FROM q2_tasks WHERE status = 'failed' AND attempt_count >= 3"
+    ).fetchone()
+    return {
+        "queued_count": int(queued["count"]),
+        "processing_count": int(processing["count"]),
+        "failed_count": int(failed["count"]),
+        "retryable_count": max(0, int(failed["count"]) - int(exhausted["count"])),
+        "oldest_queued_at": queued["oldest"],
+        "stale_processing_count": int(stale["count"]),
+        "max_attempt_exhausted_count": int(exhausted["count"]),
+    }
+
+
+def _regeneration_queue_counts(
+    connection: sqlite3.Connection, *, now: str
+) -> dict[str, Any]:
+    queued = connection.execute(
+        "SELECT count(*) AS count, min(queued_at) AS oldest FROM review_regeneration_jobs "
+        "WHERE status = 'queued'"
+    ).fetchone()
+    processing = connection.execute(
+        "SELECT count(*) AS count FROM review_regeneration_jobs WHERE status = 'processing'"
+    ).fetchone()
+    complete = connection.execute(
+        "SELECT count(*) AS count FROM review_regeneration_jobs WHERE status = 'complete'"
+    ).fetchone()
+    failed = connection.execute(
+        "SELECT count(*) AS count FROM review_regeneration_jobs WHERE status = 'failed'"
+    ).fetchone()
+    retryable = connection.execute(
+        "SELECT count(*) AS count FROM review_regeneration_jobs WHERE status = 'failed' "
+        "AND failure_code IN ('temporary_artifact_write_failure', 'worker_interrupted') "
+        "AND attempt_count < ?",
+        (REGENERATION_MAX_ATTEMPTS,),
+    ).fetchone()
+    stale = connection.execute(
+        "SELECT count(*) AS count FROM review_regeneration_jobs WHERE status = 'processing' "
+        "AND lease_expires_at IS NOT NULL AND lease_expires_at < ?",
+        (now,),
+    ).fetchone()
+    exhausted = connection.execute(
+        "SELECT count(*) AS count FROM review_regeneration_jobs WHERE status = 'failed' "
+        "AND attempt_count >= ?",
+        (REGENERATION_MAX_ATTEMPTS,),
+    ).fetchone()
+    return {
+        "queued_count": int(queued["count"]),
+        "processing_count": int(processing["count"]),
+        "complete_count": int(complete["count"]),
+        "failed_count": int(failed["count"]),
+        "retryable_count": int(retryable["count"]),
+        "oldest_queued_at": queued["oldest"],
+        "stale_processing_count": int(stale["count"]),
+        "max_attempt_exhausted_count": int(exhausted["count"]),
+    }
 
 
 def _allowed_review_actions(review_type: str) -> list[str]:

@@ -49,6 +49,15 @@ PYTHONPATH=backend/src python3 -m jobagent_v2.server
 Endpoint documentation is in `docs/phase_1_api.md`. The filename is historical;
 the document covers the current local API through packet-generation endpoints.
 
+Run local background workers:
+
+```bash
+PYTHONPATH=backend/src python3 -m jobagent_v2.worker_runner --all
+```
+
+Worker startup, health, queue metrics, and troubleshooting are documented in
+`docs/worker_operations.md`.
+
 Packet PDF generation requires `pdflatex` on `PATH`. If the LaTeX toolchain is
 missing, packet generation fails visibly and remains retryable.
 

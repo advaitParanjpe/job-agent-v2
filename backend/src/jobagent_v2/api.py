@@ -43,6 +43,9 @@ API_DOCUMENTATION = {
     "POST /api/workers/q2/run-once": "Run one Queue 2 packet-generation job.",
     "POST /api/workers/regeneration/run-once": "Run one reviewed packet-regeneration job.",
     "POST /api/workers/promotion/run-once": "Run one deterministic promotion scheduler cycle.",
+    "GET /api/workers/status": "Return local worker health and queue diagnostics.",
+    "GET /api/workers/{worker_type}/status": "Return one worker type status.",
+    "GET /api/workers/queues": "Return queue depth and stale-work summaries.",
     "GET /api/queue/q2": "List persistent Q2 tasks and queue capacity diagnostics.",
 }
 
@@ -75,6 +78,16 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                     return
                 if path == "/api/queue/q2":
                     self._send_json(service.list_q2_tasks())
+                    return
+                if path == "/api/workers/status":
+                    self._send_json(service.worker_status())
+                    return
+                if path == "/api/workers/queues":
+                    self._send_json(service.queue_status())
+                    return
+                worker_type, worker_suffix = _match_worker_route(path)
+                if worker_type and worker_suffix == "/status":
+                    self._send_json(service.worker_status(worker_type))
                     return
                 if path == "/api/reviews":
                     self._send_json(
@@ -300,6 +313,17 @@ def _match_review_route(path: str) -> tuple[str | None, str]:
     if "/" in rest:
         review_id, suffix = rest.split("/", 1)
         return review_id, f"/{suffix}"
+    return rest, ""
+
+
+def _match_worker_route(path: str) -> tuple[str | None, str]:
+    prefix = "/api/workers/"
+    if not path.startswith(prefix):
+        return None, ""
+    rest = path[len(prefix):]
+    if "/" in rest:
+        worker_type, suffix = rest.split("/", 1)
+        return worker_type, f"/{suffix}"
     return rest, ""
 
 

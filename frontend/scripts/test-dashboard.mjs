@@ -37,6 +37,9 @@ if (!html.includes('id="process-intake-queue"')) {
 if (!html.includes('id="reviews-list"')) {
   throw new Error("dashboard missing review queue section");
 }
+if (!html.includes('id="workers-list"')) {
+  throw new Error("dashboard missing worker status section");
+}
 
 const sandbox = {
   console,
@@ -68,6 +71,7 @@ assertEqual(
   dashboard.regenerationStatusLabel("queued"),
   "Queued - waiting for the regeneration worker.",
 );
+assertEqual(dashboard.secondsLabel(65), "1m 5s");
 
 const tbody = createElement("tbody");
 dashboard.renderJobs(
@@ -152,6 +156,21 @@ dashboard.renderJobs(
 assertEqual(queuedBody.children[0].children[10].textContent, "Queued - not processed");
 
 const review = sampleReview();
+const workers = createElement("div");
+dashboard.renderWorkerStatus(sampleWorkerStatus(), workers);
+const workerText = elementText(workers);
+for (const expected of [
+  "Queue 1",
+  "Queue 2",
+  "Regeneration",
+  "degraded",
+  "queued_work_without_healthy_worker",
+]) {
+  if (!workerText.includes(expected)) {
+    throw new Error(`worker status missing ${expected}`);
+  }
+}
+
 const reviewList = createElement("div");
 dashboard.renderReviewQueue([review], reviewList, () => {});
 if (!elementText(reviewList).includes("wrong_family_reported")) {
@@ -274,6 +293,14 @@ await dashboard.createJobReview("job-1", { review_type: "classification", reason
 });
 if (!lastFetch.url.endsWith("/api/jobs/job-1/reviews")) {
   throw new Error("manual review creation should call job review endpoint");
+}
+
+await dashboard.fetchWorkerStatus(async (url, options) => {
+  lastFetch = { url, options };
+  return { ok: true, json: async () => sampleWorkerStatus() };
+});
+if (!lastFetch.url.endsWith("/api/workers/status")) {
+  throw new Error("worker status should call status endpoint");
 }
 
 console.log("frontend dashboard checks passed");
@@ -409,5 +436,34 @@ function sampleReview() {
       "select_approved_replacement",
     ],
     history: [],
+  };
+}
+
+function sampleWorkerStatus() {
+  return {
+    workers: [
+      {
+        worker_type: "q1",
+        health: "idle",
+        current_job_id: null,
+        last_success_at: "2026-06-30T12:00:00Z",
+        last_failure_at: null,
+      },
+    ],
+    queues: {
+      q1: { queued_count: 0, processing_count: 0, failed_count: 0 },
+      q2: { queued_count: 2, processing_count: 0, failed_count: 1 },
+      regeneration: { queued_count: 1, processing_count: 0, failed_count: 0 },
+    },
+    queue_health: {
+      q1: { health: "idle", warnings: [], healthy_worker_count: 1 },
+      q2: {
+        health: "degraded",
+        warnings: ["queued_work_without_healthy_worker"],
+        healthy_worker_count: 0,
+        oldest_queued_age_seconds: 65,
+      },
+      regeneration: { health: "offline", warnings: [], healthy_worker_count: 0 },
+    },
   };
 }

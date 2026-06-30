@@ -8,7 +8,8 @@ main {
   max-width: 1440px;
 }
 
-.review-section {
+.review-section,
+.worker-section {
   border: 1px solid #d9e2ec;
   border-radius: 8px;
   margin: 0 0 24px;
@@ -61,8 +62,15 @@ a:focus-visible {
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
+.worker-list {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
 .review-card,
-.review-detail {
+.review-detail,
+.worker-card {
   border: 1px solid #d9e2ec;
   border-radius: 8px;
   padding: 12px;
@@ -70,7 +78,8 @@ a:focus-visible {
 
 .review-card h3,
 .review-detail h3,
-.review-subsection h4 {
+.review-subsection h4,
+.worker-card h3 {
   margin-top: 0;
 }
 
