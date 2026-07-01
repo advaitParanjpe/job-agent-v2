@@ -196,8 +196,19 @@ async function submitCapture(payload, fetchImpl = fetch) {
 }
 
 function outcomeLabel(result) {
+  const labels = {
+    created: "Added to queue",
+    existing_active: "Already being analysed",
+    existing_complete: "Already exists",
+    existing_archived: "Found in archive",
+    existing_failed: "Previous analysis failed",
+    restored_and_rescore_started: "Re-score started",
+  };
+  if (result.outcome && labels[result.outcome]) {
+    return labels[result.outcome];
+  }
   if (result.duplicate) {
-    return "Already queued";
+    return "Already exists";
   }
   return "Added to queue";
 }

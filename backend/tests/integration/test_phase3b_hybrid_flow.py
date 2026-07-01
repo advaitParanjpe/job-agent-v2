@@ -21,7 +21,10 @@ def test_hybrid_result_persists_semantic_diagnostics(
         "jd_text": "Responsibilities\nSystemVerilog RTL ASIC.\n"
         "Qualifications\nVerilog Python."
     })
-    result = score_hybrid_job(job)
+    result = score_hybrid_job(
+        job,
+        SemanticLLMClient(LLMConfig(False, None, "fake-model", 1, 0)),
+    )
     repository.save_scoring_result(str(created["job_id"]), result)
 
     score = service.get_score(str(created["job_id"]))["score"]

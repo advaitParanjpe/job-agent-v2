@@ -7,7 +7,8 @@ tailoring, or packet-generation policy.
 ## Worker Types
 
 - `q1`: deterministic intake, structuring, family classification, and
-  candidate-fit scoring.
+  candidate-fit scoring. Each scoring attempt is tracked as an analysis run so
+  completed historical analyses do not block an explicit re-score.
 - `q2`: packet generation from promoted Q2 tasks.
 - `regeneration`: reviewed packet regeneration from queued review resolutions.
 
@@ -64,6 +65,19 @@ POST /api/workers/q2/run-once
 POST /api/workers/regeneration/run-once
 POST /api/workers/promotion/run-once
 ```
+
+Job restore and re-score endpoints:
+
+```http
+POST /api/jobs/{job_id}/restore
+POST /api/jobs/{job_id}/rescore
+POST /api/jobs/{job_id}/restore-and-rescore
+GET  /api/jobs/{job_id}/analyses
+```
+
+Restore does not enqueue scoring. Re-score uses the stored captured job content.
+Repeated re-score or restore-and-re-score requests while an analysis run is
+active return the existing active run.
 
 ## Polling Configuration
 
@@ -136,7 +150,8 @@ healthy idle worker is healthy/idle, not a failure.
 ## Queue Metrics
 
 `GET /api/workers/status` returns worker instances, queue summaries, health,
-recent safe operational events, and safe config values.
+recent safe operational events, semantic LLM configuration, demo-cleanup
+preview counts, and safe config values.
 
 `GET /api/workers/{worker_type}/status` returns the same view for one of:
 `q1`, `q2`, or `regeneration`.
@@ -189,3 +204,20 @@ If a worker is offline while work is queued, start:
 ```bash
 PYTHONPATH=backend/src python3 -m jobagent_v2.worker_runner --all
 ```
+
+## Dashboard System View
+
+Worker details now live in the dashboard System section rather than dominating
+the Jobs view. Jobs uses plain workflow labels such as "Waiting to be scored",
+"Generating CV packet", and "Packet ready"; System retains queue counts,
+worker health, semantic configuration, and recent safe warnings for operators.
+
+The System section also exposes `Remove demo jobs`, which calls the same
+owner-scoped safe cleanup path as:
+
+```bash
+./scripts/clear-demo-jobs
+```
+
+Only jobs explicitly marked `source_provenance: demo` are removed. Real/manual
+and extension jobs are preserved.

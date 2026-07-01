@@ -4,6 +4,211 @@ This file records verified completed milestones and major architectural decision
 
 ## Completed milestones
 
+### Archived Job Restore/Re-Score and Semantic Requirement Extraction
+Completion date: 2026-07-01.
+
+Relevant commit:
+- Not committed at the time of this audit.
+
+Main functionality delivered:
+- Reproduced the archived duplicate bug in an isolated SQLite database. The
+  root cause was normalized-URL deduplication returning the archived job row
+  with stale `intake_status='queued'`, followed by extension UI mapping every
+  duplicate to "Already queued"; no active Q2 task was required.
+- Added structured duplicate-capture outcomes:
+  `created`, `existing_active`, `existing_complete`, `existing_archived`, and
+  `existing_failed`, with allowed actions and safe user-facing messages.
+- Added owner-scoped restore, manual re-score, restore-and-re-score, and
+  analysis-history API/service paths.
+- Added additive `analysis_runs` persistence with active-run idempotency,
+  trigger tracking, latest/current run pointers, and append-only score,
+  semantic, classification, and block-score history.
+- Preserved previous packet artifacts, review records, regeneration history,
+  and legacy job snapshot fields.
+- Updated frontend and extension language so archived/completed duplicates do
+  not display `Already queued`, and exposed restore/re-score/previous analyses
+  under progressive disclosure.
+- Added grounded semantic requirement extraction validation with approved
+  capability ontology checks, evidence-quote grounding, negation and generic
+  language rejection, deterministic plus semantic fusion, and semantic-only
+  confidence discounting.
+- Kept semantic requirement fusion feature-flagged/fallback-first. Live
+  semantic requirement diagnostic ran with the configured key but returned
+  `response_invalid`, so no live semantic weights were promoted.
+
+Validation evidence:
+- `PYTHONPATH=backend/src pytest backend/tests/unit -q`: 179 passed, 2 skipped.
+- `node frontend/scripts/test-dashboard.mjs`: passed.
+- `python3 scripts/evaluate_cross_domain_portfolio.py`: 6 examples,
+  shortlist recall 1.0, unexpected shortlist rate 0.0, no failures.
+- `PYTHONPATH=backend/src python3 scripts/evaluate_semantic_requirements.py`:
+  6 examples, capability precision 1.0, capability recall 1.0, semantic-only
+  false positives 0.
+- `./scripts/semantic-requirements-check --no-network`: `simulated_success`.
+- `./scripts/semantic-requirements-check`: ran with the configured local key
+  without printing it and failed safely as `response_invalid`.
+- `python3 scripts/check.py`: 221 backend tests passed, 2 skipped, plus
+  frontend and extension checks.
+- `git diff --check`: passed.
+- `git status --short`: inspected.
+
+Important limitations:
+- Live semantic requirement extraction was not verified as successful in this
+  environment; fallback/deterministic behavior remains the production-safe
+  path.
+- Isolated local-stack startup printed startup/worker logs and stopped cleanly,
+  but API probes from the tool environment could not connect to the alternate
+  port. Direct service/API-path tests cover the restore/re-score behavior.
+- Owner scoping is enforced on restore/re-score/history actions; legacy
+  normalized-URL uniqueness still reflects the local-only product boundary and
+  should be revisited before any real multi-user mode.
+
+### Requirement-Aware Cross-Family Project Portfolio Selection
+Completion date: 2026-07-01.
+
+Relevant commit:
+- Not committed at the time of this audit.
+
+Main functionality delivered:
+- Traced the Qualcomm-style ML/NPU regression to family-gated candidate
+  generation: ML packets only evaluated `registry.compatibility.ml`, while
+  TinyNPU was eligible only for `digital_ic`.
+- Added deterministic requirement extraction that records grounded
+  capabilities, evidence quotes, specificity, importance, differentiation
+  value, and required/preferred source context.
+- Added approved project portfolio metadata for every registered project block
+  without changing approved block wording or canonical master CV content.
+- Added requirement-aware portfolio scoring over all blocks eligible for the
+  selected base family, including coverage, specificity, bridge bonus,
+  base-family affinity, shortlist reasons, and counterfactual gain.
+- Preserved one approved whole-project substitution, explicit compatibility
+  validation, exact approved block rendering, immutable non-project sections,
+  and one-page packet validation.
+- ML base CVs can now shortlist approved Digital IC bridge projects when
+  grounded high-specificity requirements justify evaluation. Borderline
+  cross-family options are surfaced for review instead of inserted silently.
+- The frontend now displays Base CV and Project Portfolio separately and keeps
+  requirement coverage and alternative portfolio scores under disclosures.
+- Added an offline cross-domain project-selection evaluation command and
+  invariant dataset.
+
+Validation evidence:
+- `PYTHONPATH=backend/src pytest backend/tests/unit -q`: 171 passed, 2 skipped.
+- `node frontend/scripts/test-dashboard.mjs`: passed.
+- `python3 scripts/evaluate_cross_domain_portfolio.py`: 6 examples,
+  shortlist recall 1.0, unexpected shortlist rate 0.0, no failures.
+- `python3 scripts/check.py`: 213 backend tests passed, 2 skipped, plus
+  frontend and extension checks.
+- `./scripts/dev-up --open`: preflight passed, API/workers/frontend started,
+  and the frontend served `/`, `styles.css`, and `app.js`; the stack was then
+  stopped cleanly.
+- `git diff --check`: passed.
+- `git status --short`: inspected.
+
+Important limitations:
+- The new portfolio weights are deterministic initial policy weights validated
+  by an invariant fixture set, not promoted from a broad real-job calibration
+  dataset.
+- Semantic requirement extraction remains future work; this milestone uses
+  deterministic grounded extraction and preserves semantic fallback behavior.
+
+### Minimal Retro Frontend and Stage-Based Workflow Redesign
+Completion date: 2026-06-30.
+
+Relevant commit:
+- Not committed at the time of this audit.
+
+Main functionality delivered:
+- Added a central frontend stage model mapping internal job states into
+  product-facing stages: Added, Analysing role, Choosing CV, Generating packet,
+  Ready, Needs review, Reviewed, Regenerating, Reviewed packet ready, Action
+  needed, and Archived.
+- Redesigned Jobs as the primary product surface with a compact job list,
+  selected-job detail, current-stage card, square step indicator, key result
+  strip, and one visually dominant next action.
+- Collapsed scoring internals, classification scores, deterministic evidence,
+  semantic evidence, packet details, technical metadata, and archive/delete
+  controls behind progressive disclosure.
+- Redesigned Reviews as an inbox and changed review detail into a staged flow:
+  recommendation, project/CV change, confirmation.
+- Redesigned System as compact operational cards with worker, queue, semantic
+  provider, database, and artifact diagnostics under disclosure sections.
+- Replaced the previous dashboard styling with a minimal retro workstation
+  design system using CSS custom properties, warm off-white panels, thin
+  borders, compact monospace labels, square progress markers, and one muted
+  green accent.
+- Updated README with the Jobs/Reviews/System structure, stage workflow,
+  advanced-detail placement, and visual design intent.
+
+Validation evidence:
+- `node frontend/scripts/test-dashboard.mjs`: passed.
+- `python3 scripts/check.py`: 206 backend tests passed, 2 skipped, plus
+  frontend and extension checks.
+- `./scripts/dev-down`: no tracked processes were running.
+- `./scripts/dev-up --open`: preflight passed, API/workers/frontend started,
+  and the frontend served `/`, `styles.css`, and `app.js`; the stack was then
+  stopped cleanly.
+- `./scripts/dev-status`: API, frontend, and workers stopped.
+- `git diff --check`: passed.
+- `git status --short`: inspected.
+
+Important limitations:
+- Browser interaction could not be captured through the tool environment beyond
+  startup and asset-serving logs, but the frontend harness exercises the stage
+  model and DOM rendering directly.
+
+### Frontend Usability, Demo Cleanup, and Semantic Observability
+Completion date: 2026-06-30.
+
+Relevant commit:
+- Not committed at the time of this audit.
+
+Main functionality delivered:
+- Replaced the dense single-page dashboard with `Jobs`, `Reviews`, and
+  `System` navigation. Jobs is the default view and uses a master/detail layout
+  with summary counts, filters, workflow timeline, selected-job detail, and one
+  obvious primary action.
+- Separated candidate-fit scoring from CV-family classification in the job
+  detail view, including explanatory notes and all four family scores.
+- Replaced raw `hybrid_match` presentation with mixed-role language showing
+  selected and secondary human-readable families.
+- Moved worker and queue internals into System while keeping Reviews focused on
+  review reason, recommended family, proposed project change, and expandable
+  evidence.
+- Added explicit semantic observability fields for enabled/attempted/fallback
+  state, semantic status, provider/model, timestamps/latency where available,
+  safe failure code/summary, semantic assessment summary, deterministic family
+  decision, and live/fallback visibility in the UI.
+- Added `./scripts/semantic-check` with `--no-network` fake mode and live mode
+  that never prints the configured key and does not write to the jobs database.
+- Added `source_provenance` for jobs; demo seeding marks future demo jobs as
+  `demo`.
+- Added owner-scoped demo cleanup through `./scripts/clear-demo-jobs` and API
+  endpoints that only remove explicitly marked demo jobs.
+- Added individual delete/archive behavior: demo/test jobs are hard-deleted;
+  manual, extension, and imported jobs are archived.
+- Updated README, family-classification docs, review docs, and worker
+  operations docs.
+
+Validation evidence:
+- `PYTHONPATH=backend/src pytest backend/tests/unit -q`: 164 passed, 2 skipped.
+- `node frontend/scripts/test-dashboard.mjs`: passed.
+- `./scripts/semantic-check --no-network`: status `live_success`, model
+  `gpt-5.4-mini`, selected family `verification`, evidence count 3.
+- `./scripts/semantic-check`: ran with the configured local credential without
+  printing it; result was safe failure `request_failed`, model
+  `gpt-5.4-mini`, selected family `verification`, evidence count 0.
+- `python3 scripts/check.py`: 206 backend tests passed, 2 skipped, plus
+  frontend and extension checks.
+- `git diff --check`: passed.
+- `git status --short`: inspected.
+
+Important limitations:
+- Live semantic success was not verified in this environment because the
+  configured live diagnostic returned `request_failed`.
+- The API still preserves existing packet/artifact fields for compatibility;
+  the frontend avoids showing internal filesystem paths in default views.
+
 ### State Reconstruction and Terminology Normalization
 Completion date: 2026-06-29.
 
@@ -511,6 +716,64 @@ Important limitations:
   tests and smoke flows use isolated databases.
 - This remains a local-first release candidate, not a hosted multi-user
   production service.
+
+### Local Setup and One-Command Startup Simplification
+Completion date: 2026-06-30.
+
+Relevant commit:
+- Not committed at the time of this audit.
+
+Main functionality delivered:
+- Added `jobagent_v2.config.load_local_env` for repository-root `.env.local`
+  loading without adding a new dependency.
+- Supported blank lines, comments, optional `export`, quoted values, and inline
+  comments for unquoted values.
+- Preserved operator precedence: already exported shell variables are not
+  overridden by `.env.local` unless a caller explicitly requests override.
+- Wired `.env.local` loading into `./scripts/dev-up`, preflight, database
+  status, direct API server, worker runner, review regeneration worker,
+  calibration, and the explicit live LLM smoke command.
+- Added supported `./scripts/setup-local`, `./scripts/dev-down`,
+  `./scripts/dev-status`, and `./scripts/demo-local` commands.
+- Added ignored runtime PID state under `.runtime/` so shutdown targets only
+  children launched by `dev-up`.
+- Added safe LLM startup validation for missing and obvious placeholder API
+  keys without making provider calls.
+- Added actionable port-conflict diagnostics with PID/command reporting where
+  available and no automatic killing of unrelated processes.
+- Kept deterministic validation offline by default; live semantic
+  classification still requires `JOBAGENT_LLM_ENABLED=true` and a local API key.
+- Updated `.env.example` to use `data/local-test/` by default and updated
+  README with quick start, setup/status/shutdown, demo seeding, local data,
+  port troubleshooting, and semantic-call cost notes.
+- Continued to redact credentials from displayed runtime configuration and
+  explicitly ignore `.env.local` so it is not tracked.
+
+Validation evidence:
+- `PYTHONPATH=backend/src pytest backend/tests/unit/test_release_hardening.py -q`:
+  18 passed.
+- `./scripts/setup-local`: created `.env.local` from `.env.example` after
+  approved pip network access and did not print any key.
+- `./scripts/dev-status`: reported `.env.local` present, services stopped, LLM
+  enabled, and API key missing without exposing secrets.
+- `./scripts/dev-up --skip-preflight`: failed helpfully when
+  `JOBAGENT_LLM_ENABLED=true` and `JOBAGENT_LLM_API_KEY` was missing.
+- Isolated startup smoke: with `/tmp` data/artifact/database paths and
+  alternate ports `8766` and `5174`, `./scripts/dev-up --skip-preflight`
+  started the API, Q1/Q2/regeneration workers, and frontend; `dev-status`
+  reached worker health; `./scripts/dev-down` stopped the tracked API, worker,
+  and frontend PIDs.
+- `./scripts/demo-local`: created 7 jobs in `data/local-test/jobagent.sqlite3`.
+- `python3 scripts/check.py`: 202 backend tests passed, 2 local TeX compile
+  tests skipped, plus frontend and extension checks.
+- `git diff --check`: passed.
+- `git status --short`: inspected.
+
+Important limitations:
+- The live semantic path was not credential-tested; provider access, billing,
+  and model availability remain operator responsibilities.
+- `.env.local` loading is intended for local CLI/startup workflows, not hosted
+  deployment or credential management.
 
 ## Major architectural decisions
 

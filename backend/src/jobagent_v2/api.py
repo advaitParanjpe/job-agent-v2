@@ -39,6 +39,14 @@ API_DOCUMENTATION = {
     "GET /api/jobs/{job_id}/block-scores": "Return persisted block-level scores.",
     "GET /api/jobs/{job_id}/semantic-assessment": "Return persisted hybrid semantic diagnostics.",
     "POST /api/jobs/{job_id}/rescore": "Rescore a completed intake job.",
+    "POST /api/jobs/{job_id}/restore": "Restore an archived job without queueing scoring.",
+    "POST /api/jobs/{job_id}/restore-and-rescore": (
+        "Restore an archived job and start a new scoring run."
+    ),
+    "GET /api/jobs/{job_id}/analyses": "Return versioned analysis-run history for a job.",
+    "POST /api/jobs/{job_id}/reanalyze-project-selection": (
+        "Recompute requirement-aware project selection without generating a packet."
+    ),
     "POST /api/workers/q1/run-once": "Run one Queue 1 intake/scoring job.",
     "POST /api/workers/q2/run-once": "Run one Queue 2 packet-generation job.",
     "POST /api/workers/regeneration/run-once": "Run one reviewed packet-regeneration job.",
@@ -47,6 +55,9 @@ API_DOCUMENTATION = {
     "GET /api/workers/{worker_type}/status": "Return one worker type status.",
     "GET /api/workers/queues": "Return queue depth and stale-work summaries.",
     "GET /api/queue/q2": "List persistent Q2 tasks and queue capacity diagnostics.",
+    "GET /api/demo-jobs/preview": "Preview owner-scoped demo jobs that can be safely removed.",
+    "POST /api/demo-jobs/clear": "Remove only owner-scoped jobs explicitly marked as demo.",
+    "POST /api/jobs/{job_id}/delete": "Hard-delete demo/test jobs or archive real jobs.",
 }
 
 
@@ -78,6 +89,9 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                     return
                 if path == "/api/queue/q2":
                     self._send_json(service.list_q2_tasks())
+                    return
+                if path == "/api/demo-jobs/preview":
+                    self._send_json(service.demo_cleanup_preview(owner_id=self._owner_id(query)))
                     return
                 if path == "/api/workers/status":
                     self._send_json(service.worker_status())
@@ -147,6 +161,9 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                 if job_id and suffix == "/semantic-assessment":
                     self._send_json(service.get_semantic_assessment(job_id))
                     return
+                if job_id and suffix == "/analyses":
+                    self._send_json(service.list_analyses(job_id, owner_id=self._owner_id(query)))
+                    return
                 if job_id and suffix == "/q2-task":
                     self._send_json(service.get_q2_task(job_id))
                     return
@@ -178,6 +195,9 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                 if path == "/api/workers/promotion/run-once":
                     self._send_json(service.run_promotion_once())
                     return
+                if path == "/api/demo-jobs/clear":
+                    self._send_json(service.clear_demo_jobs(owner_id=self._owner_id({})))
+                    return
                 review_id, review_suffix = _match_review_route(path)
                 if review_id and review_suffix == "/resolve":
                     self._send_json(
@@ -207,8 +227,22 @@ def make_handler(service: JobService) -> type[BaseHTTPRequestHandler]:
                 if job_id and suffix == "/archive":
                     self._send_json(service.archive(job_id))
                     return
+                if job_id and suffix == "/restore":
+                    self._send_json(service.restore(job_id, owner_id=self._owner_id({})))
+                    return
+                if job_id and suffix == "/restore-and-rescore":
+                    self._send_json(
+                        service.restore_and_rescore(job_id, owner_id=self._owner_id({}))
+                    )
+                    return
+                if job_id and suffix == "/delete":
+                    self._send_json(service.delete_or_archive(job_id, owner_id=self._owner_id({})))
+                    return
                 if job_id and suffix == "/rescore":
-                    self._send_json(service.rescore(job_id))
+                    self._send_json(service.rescore(job_id, owner_id=self._owner_id({})))
+                    return
+                if job_id and suffix == "/reanalyze-project-selection":
+                    self._send_json(service.reanalyze_project_selection(job_id))
                     return
                 if job_id and suffix == "/reviews":
                     self._send_json(

@@ -6,15 +6,21 @@ import argparse
 import importlib.util
 import json
 import shutil
-import socket
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from jobagent_v2.config import RELEASE_VERSION, RuntimeConfig
+from jobagent_v2.config import (
+    LOCAL_ENV_FILENAME,
+    RELEASE_VERSION,
+    REPO_ROOT,
+    RuntimeConfig,
+    load_local_env,
+)
 from jobagent_v2.db_status import inspect_database
 from jobagent_v2.family_classifier import load_classifier_config
+from jobagent_v2.local_runtime import port_owner
 from jobagent_v2.master_cvs import MasterCVValidationError, discover_master_cvs
 from jobagent_v2.project_blocks import load_project_block_registry
 from jobagent_v2.tailoring import load_tailoring_policy
@@ -42,6 +48,8 @@ def run_preflight(
         _check_python(),
         _check_package("pypdf"),
         _check_package("openai"),
+        _check_local_env(),
+        _check_llm_config(cfg),
         _check_writable_directory(cfg.data_dir, "data_directory"),
         _check_writable_directory(cfg.artifact_dir, "artifact_directory"),
         _check_master_cvs(),
@@ -80,6 +88,26 @@ def _check_package(name: str) -> CheckResult:
     if importlib.util.find_spec(name) is None:
         return CheckResult(f"python_package:{name}", "fail", f"Missing package: {name}", True)
     return CheckResult(f"python_package:{name}", "pass", "available")
+
+
+def _check_local_env() -> CheckResult:
+    path = REPO_ROOT / LOCAL_ENV_FILENAME
+    if not path.exists():
+        return CheckResult("local_env", "pass", ".env.local not present; using process environment")
+    return CheckResult("local_env", "pass", ".env.local present; secrets are redacted")
+
+
+def _check_llm_config(config: RuntimeConfig) -> CheckResult:
+    errors = config.validate_llm_startup()
+    if errors:
+        return CheckResult("llm_config", "fail", " ".join(errors), True)
+    if config.semantic_enabled:
+        return CheckResult("llm_config", "pass", "semantic evidence enabled; API key configured")
+    return CheckResult(
+        "llm_config",
+        "pass",
+        "semantic evidence disabled; deterministic behavior is used where supported",
+    )
 
 
 def _check_writable_directory(path: Path, name: str) -> CheckResult:
@@ -164,15 +192,19 @@ def _check_latex(executable: str, *, strict: bool) -> CheckResult:
 
 
 def _check_port(host: str, port: int, name: str) -> CheckResult:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.2)
-        result = sock.connect_ex((host, port))
-    if result == 0:
-        return CheckResult(name, "fail", f"{host}:{port} is already in use.", True)
+    owner = port_owner(host, port)
+    if owner is not None:
+        message = (
+            f"{owner.describe()}. Inspect with: "
+            f"lsof -nP -iTCP:{port} -sTCP:LISTEN. "
+            "If this is a previous job-agent-v2 stack, run ./scripts/dev-down."
+        )
+        return CheckResult(name, "fail", message, True)
     return CheckResult(name, "pass", f"{host}:{port} available")
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_local_env()
     parser = argparse.ArgumentParser(description="Run local release preflight checks.")
     parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     parser.add_argument("--strict-latex", action="store_true")

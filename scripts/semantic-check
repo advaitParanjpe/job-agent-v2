@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+PYTHONPATH=backend/src python3 -m jobagent_v2.semantic_check "$@"

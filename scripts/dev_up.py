@@ -6,9 +6,9 @@ from __future__ import annotations
 import argparse
 import os
 import signal
-import socket
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from pathlib import Path
@@ -25,18 +25,33 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     sys.path.insert(0, str(BACKEND_SRC))
-    from jobagent_v2.config import RuntimeConfig
+    from jobagent_v2.config import RuntimeConfig, load_local_env
+    from jobagent_v2.local_runtime import (
+        assert_ports_available,
+        assert_startup_config,
+        clean_state_if_stale,
+        print_safe_config_summary,
+        require_local_env,
+        write_state,
+    )
     from jobagent_v2.preflight import run_preflight
 
-    config = RuntimeConfig.from_env()
-    if not args.skip_preflight:
-        result = run_preflight(config=config, strict_latex=False, check_ports=True)
-        _print_preflight(result)
-        if not result["ok"]:
-            return 1
-    else:
-        _assert_port_available(config.api_host, config.api_port, "API")
-        _assert_port_available(config.frontend_host, config.frontend_port, "frontend")
+    try:
+        require_local_env()
+        local_env = load_local_env()
+        config = RuntimeConfig.from_env()
+        print_safe_config_summary(config)
+        assert_startup_config(config)
+        clean_state_if_stale()
+        assert_ports_available(config)
+        if not args.skip_preflight:
+            result = run_preflight(config=config, strict_latex=False, check_ports=False)
+            _print_preflight(result)
+            if not result["ok"]:
+                return 1
+    except (RuntimeError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
 
     env = os.environ.copy()
     existing_path = env.get("PYTHONPATH")
@@ -45,12 +60,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.artifact_dir.mkdir(parents=True, exist_ok=True)
+    python = _python_executable()
 
     commands = [
         (
             "api",
             [
-                sys.executable,
+                python,
                 "-m",
                 "jobagent_v2.server",
                 "--host",
@@ -66,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         (
             "workers",
             [
-                sys.executable,
+                python,
                 "-m",
                 "jobagent_v2.worker_runner",
                 "--all",
@@ -79,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         (
             "frontend",
             [
-                sys.executable,
+                python,
                 "-m",
                 "http.server",
                 str(config.frontend_port),
@@ -90,15 +106,28 @@ def main(argv: list[str] | None = None) -> int:
             ],
         ),
     ]
-    processes: list[tuple[str, subprocess.Popen[bytes]]] = []
+    processes: list[tuple[str, subprocess.Popen[str], list[str]]] = []
+    readers: list[threading.Thread] = []
     print("Starting JobAgent local release stack")
+    if local_env.exists:
+        print(f"Config:   loaded {local_env.path}")
     print(f"API:      http://{config.api_host}:{config.api_port}")
     print(f"Frontend: http://{config.frontend_host}:{config.frontend_port}")
     print("Workers:  q1, q2, regeneration")
     try:
         for name, command in commands:
-            process = subprocess.Popen(command, cwd=REPO_ROOT, env=env)
-            processes.append((name, process))
+            process = subprocess.Popen(
+                command,
+                cwd=REPO_ROOT,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+            )
+            processes.append((name, process, command))
+            readers.append(_prefix_output(name, process))
             time.sleep(0.4)
             if process.poll() is not None:
                 print(
@@ -106,10 +135,19 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
+        write_state([
+            {
+                "name": name,
+                "pid": process.pid,
+                "command": command,
+                "cwd": str(REPO_ROOT),
+            }
+            for name, process, command in processes
+        ])
         if args.open:
             webbrowser.open(f"http://{config.frontend_host}:{config.frontend_port}")
         while True:
-            for name, process in processes:
+            for name, process, _command in processes:
                 code = process.poll()
                 if code is not None:
                     print(f"{name} exited with code {code}; stopping stack", file=sys.stderr)
@@ -120,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     finally:
         _terminate(processes)
+        for reader in readers:
+            reader.join(timeout=1)
 
 
 def _print_preflight(result: dict[str, object]) -> None:
@@ -128,24 +168,39 @@ def _print_preflight(result: dict[str, object]) -> None:
         print(f"{item['status'].upper():4} {item['name']}: {item['message']}")
 
 
-def _assert_port_available(host: str, port: int, label: str) -> None:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.2)
-        if sock.connect_ex((host, port)) == 0:
-            raise SystemExit(f"{label} port {host}:{port} is already in use")
+def _python_executable() -> str:
+    candidate = REPO_ROOT / ".venv" / "bin" / "python"
+    return str(candidate) if candidate.exists() else sys.executable
 
 
-def _terminate(processes: list[tuple[str, subprocess.Popen[bytes]]]) -> None:
-    for _name, process in processes:
+def _prefix_output(name: str, process: subprocess.Popen[str]) -> threading.Thread:
+    def run() -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(f"[{name}] {line}", end="")
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
+
+
+def _terminate(processes: list[tuple[str, subprocess.Popen[str], list[str]]]) -> None:
+    for _name, process, _command in processes:
         if process.poll() is None:
-            process.send_signal(signal.SIGTERM)
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            except OSError:
+                process.send_signal(signal.SIGTERM)
     deadline = time.monotonic() + 5
-    for _name, process in processes:
+    for _name, process, _command in processes:
         while process.poll() is None and time.monotonic() < deadline:
             time.sleep(0.1)
-    for _name, process in processes:
+    for _name, process, _command in processes:
         if process.poll() is None:
-            process.kill()
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except OSError:
+                process.kill()
 
 
 if __name__ == "__main__":

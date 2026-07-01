@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from jobagent_v2.config import RuntimeConfig
+from jobagent_v2.config import RuntimeConfig, load_local_env
 from jobagent_v2.storage import Repository, SCHEMA_VERSION
 
 
@@ -56,8 +56,10 @@ def inspect_database(path: Path | str, *, initialize: bool = False) -> dict[str,
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_local_env()
+    config = RuntimeConfig.from_env()
     parser = argparse.ArgumentParser(description="Inspect JobAgent SQLite schema status.")
-    parser.add_argument("--db-path", default=str(RuntimeConfig.from_env().db_path))
+    parser.add_argument("--db-path", default=str(config.db_path))
     parser.add_argument("--initialize", action="store_true")
     args = parser.parse_args(argv)
     result = inspect_database(args.db_path, initialize=args.initialize)

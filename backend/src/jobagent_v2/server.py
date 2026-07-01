@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 from jobagent_v2.api import create_http_server
+from jobagent_v2.config import RuntimeConfig, load_local_env
 from jobagent_v2.promotion import PromotionConfig
 
 
@@ -30,11 +31,13 @@ def start_promotion_loop(server) -> threading.Event | None:
 
 
 def main() -> None:
+    load_local_env()
+    config = RuntimeConfig.from_env()
     parser = argparse.ArgumentParser(description="Run the local JobAgent V2 API server")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--db-path", default="data/jobagent_v2.sqlite3")
-    parser.add_argument("--artifact-root", default="data/artifacts")
+    parser.add_argument("--host", default=config.api_host)
+    parser.add_argument("--port", type=int, default=config.api_port)
+    parser.add_argument("--db-path", default=str(config.db_path))
+    parser.add_argument("--artifact-root", default=str(config.artifact_dir))
     args = parser.parse_args()
 
     server = create_http_server(

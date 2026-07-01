@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from jobagent_v2.config import load_local_env
 from jobagent_v2.family_classifier import (
     CLASSIFIER_VERSION,
     CONFIG_PATH,
@@ -837,6 +838,7 @@ def _expected_review(item: dict[str, Any]) -> bool:
 
 
 def main(argv: list[str] | None = None) -> None:
+    load_local_env()
     parser = argparse.ArgumentParser(prog="python3 -m jobagent_v2.calibration")
     sub = parser.add_subparsers(dest="command", required=True)
     evaluate_parser = sub.add_parser("evaluate")

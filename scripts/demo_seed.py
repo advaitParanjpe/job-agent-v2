@@ -76,7 +76,7 @@ def _payloads() -> list[dict[str, object]]:
             "visible_text": f"{title}\nResponsibilities\n{text}\nQualifications\n{text}",
             "source_site": "example.test",
             "captured_at": captured_at,
-            "evidence": {"owner_id": "local"},
+            "evidence": {"owner_id": "local", "source_provenance": "demo"},
         }
         for slug, title, text in examples
     ]

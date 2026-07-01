@@ -58,6 +58,7 @@ VALID_PACKET_STATUSES: Final[set[str]] = {
 
 INTAKE_TRANSITIONS: Final[set[tuple[str, str]]] = {
     ("queued", "extracting"),
+    ("queued", "scoring"),
     ("extracting", "structuring"),
     ("extracting", "manual_review"),
     ("extracting", "failed"),

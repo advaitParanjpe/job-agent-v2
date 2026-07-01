@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from jobagent_v2.config import RuntimeConfig, load_local_env
 from jobagent_v2.master_cvs import MASTER_CV_ROOT, discover_master_cvs, pdf_page_count
 from jobagent_v2.packets import (
     PacketGenerationError,
@@ -450,9 +451,11 @@ class ReviewRegenerationWorker:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_local_env()
+    config = RuntimeConfig.from_env()
     parser = argparse.ArgumentParser(description="Process reviewed packet regeneration jobs.")
-    parser.add_argument("--db-path", default="data/jobagent_v2.sqlite3")
-    parser.add_argument("--artifact-root", default="artifacts")
+    parser.add_argument("--db-path", default=str(config.db_path))
+    parser.add_argument("--artifact-root", default=str(config.artifact_dir))
     parser.add_argument("--once", action="store_true", help="Process at most one job.")
     args = parser.parse_args(argv)
     worker = ReviewRegenerationWorker(Repository(args.db_path), args.artifact_root)

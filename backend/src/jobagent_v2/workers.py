@@ -34,6 +34,7 @@ class Queue1Worker:
         if job is None:
             return None
         job_id = str(job["id"])
+        self.repository.mark_analysis_run_running(job_id)
         self.repository.transition_intake(
             job_id,
             "extracting",
@@ -93,6 +94,7 @@ class Queue1Worker:
         return self._score_job(job_id)
 
     def rescore(self, job_id: str) -> dict[str, object]:
+        self.repository.mark_analysis_run_running(job_id)
         self.repository.transition_intake(
             job_id, "scoring", event_type="rescore_started", message="Manual rescore started."
         )
@@ -104,6 +106,7 @@ class Queue1Worker:
             result = score_hybrid_job(job)
             self.repository.save_scoring_result(job_id, result)
         except (ScoringConfigurationError, OSError, ValueError) as error:
+            self.repository.fail_analysis_run(job_id, code="scoring_failed", reason=str(error))
             return self.repository.transition_intake(
                 job_id,
                 "failed",
@@ -124,6 +127,7 @@ class Queue1Worker:
             updates={"scoring_status": "complete"},
             metadata={"scoring_version": result.score_breakdown["formula_version"]},
         )
+        self.repository.complete_analysis_run(job_id, result)
         duplicate = self.repository.find_probable_duplicate(
             job_id=job_id,
             company=str(job.get("company") or ""), title=str(job.get("title") or ""),

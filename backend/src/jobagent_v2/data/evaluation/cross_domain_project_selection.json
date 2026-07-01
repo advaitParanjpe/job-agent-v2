@@ -1,0 +1,59 @@
+{
+  "dataset_version": "cross-domain-project-selection-v1",
+  "examples": [
+    {
+      "example_id": "qualcomm_ml_npu",
+      "title": "Machine Learning Engineer - College Graduate",
+      "base_family": "ml",
+      "description": "Develop machine learning models and optimize inference for edge AI products. Preferred qualifications include knowledge of NPUs, machine-learning accelerators, quantized inference, and hardware-aware performance optimization. Use Python, C++, and PyTorch for deployment on constrained devices.",
+      "expected_shortlist": ["tinynpu_digital_ic_v1"],
+      "unexpected_shortlist": [],
+      "expected_statuses": ["review_required", "tailored", "master_unchanged"]
+    },
+    {
+      "example_id": "embedded_ai",
+      "title": "Embedded AI Engineer",
+      "base_family": "ml",
+      "description": "Build on-device inference pipelines for edge AI systems with INT8 quantization, C++ deployment, latency profiling, and constrained embedded hardware.",
+      "expected_shortlist": ["sparrowml_ml_v1"],
+      "unexpected_shortlist": [],
+      "expected_statuses": ["master_unchanged", "tailored", "review_required"]
+    },
+    {
+      "example_id": "ml_compiler",
+      "title": "ML Compiler Engineer",
+      "base_family": "software",
+      "description": "Implement compiler and runtime code generation for quantized PyTorch models, tensor layout optimization, C++ kernels, and inference performance benchmarking.",
+      "expected_shortlist": ["sparrowml_software_v1"],
+      "unexpected_shortlist": ["tinynpu_digital_ic_v1"],
+      "expected_statuses": ["master_unchanged", "review_required", "tailored"]
+    },
+    {
+      "example_id": "verification_python",
+      "title": "Verification Infrastructure Engineer",
+      "base_family": "verification",
+      "description": "Build Python infrastructure for UVM regression triage, scoreboards, functional coverage, assertions, and waveform debugging.",
+      "expected_shortlist": ["agentic_rtl_security_verification_v1"],
+      "unexpected_shortlist": ["tinynpu_digital_ic_v1"],
+      "expected_statuses": ["master_unchanged", "tailored", "review_required"]
+    },
+    {
+      "example_id": "generic_ml_negative",
+      "title": "Machine Learning Engineer",
+      "base_family": "ml",
+      "description": "Train PyTorch models, evaluate experiments, analyze datasets, run model comparison, and communicate results with product teams.",
+      "expected_shortlist": ["dementia_speech_classification_ml_v1"],
+      "unexpected_shortlist": ["tinynpu_digital_ic_v1"],
+      "expected_statuses": ["master_unchanged"]
+    },
+    {
+      "example_id": "pure_rtl_negative",
+      "title": "RTL Design Engineer",
+      "base_family": "digital_ic",
+      "description": "Implement SystemVerilog RTL, microarchitecture, synthesis, timing closure, PPA analysis, and SoC cache-coherence datapaths.",
+      "expected_shortlist": ["sparrow_cluster_digital_ic_v1"],
+      "unexpected_shortlist": ["sparrowml_ml_v1"],
+      "expected_statuses": ["master_unchanged", "tailored", "review_required"]
+    }
+  ]
+}

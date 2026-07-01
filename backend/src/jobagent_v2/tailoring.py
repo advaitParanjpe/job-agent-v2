@@ -19,6 +19,11 @@ from jobagent_v2.project_blocks import (
     load_project_block_registry,
     validate_tailoring_decision,
 )
+from jobagent_v2.requirements import (
+    counterfactual_gain,
+    extract_requirements,
+    score_project_portfolio,
+)
 
 
 TAILORING_POLICY_PATH = Path(__file__).with_name("data") / "tailoring_policy.json"
@@ -156,10 +161,18 @@ def select_tailoring_decision(
     class_decision = str(classification.get("decision") or "low_confidence")
     base_blocks = list(registry["base_project_order"][base_family])
     block_scores = score_project_blocks(job, registry, policy)
+    requirement_analysis = extract_requirements(job)
+    portfolio_scores = score_project_portfolio(
+        base_family=base_family,
+        registry=registry,
+        requirement_analysis=requirement_analysis,
+    )
+    decision["requirement_analysis"] = requirement_analysis
+    decision["project_portfolio"] = portfolio_scores
     decision["base_block_scores"] = [
         _score_payload(block_id, block_scores[block_id]) for block_id in base_blocks
     ]
-    candidates = compatible_candidates(base_family, registry)
+    candidates = compatible_candidates(base_family, registry, portfolio_scores)
     decision["candidate_blocks"] = [
         {
             **_score_payload(item["inserted"], block_scores[item["inserted"]]),
@@ -167,6 +180,7 @@ def select_tailoring_decision(
             "removed_block": item["removed"],
             "requires_review": item["requires_review"],
             "compatibility_reason": item["reason"],
+            "shortlist_reason": item.get("shortlist_reason"),
         }
         for item in candidates
     ]
@@ -177,13 +191,28 @@ def select_tailoring_decision(
             "reason": "Low-confidence family classification; approved master used unchanged.",
         })
         return decision
-    best = best_substitution(base_blocks, candidates, block_scores, registry, policy)
+    best = best_substitution(
+        base_blocks, candidates, block_scores, registry, policy, portfolio_scores
+    )
     if best is None:
-        status = "review_required" if class_decision == "close_match" else "master_unchanged"
+        review_candidate = _reviewable_requirement_candidate(candidates)
+        status = (
+            "review_required"
+            if class_decision == "close_match" or review_candidate is not None
+            else "master_unchanged"
+        )
         decision.update({
             "tailoring_status": status,
-            "requires_review": class_decision == "close_match" or bool(decision["requires_review"]),
-            "reason": "No compatible replacement exceeded the configured relevance gain.",
+            "requires_review": (
+                class_decision == "close_match"
+                or review_candidate is not None
+                or bool(decision["requires_review"])
+            ),
+            "reason": (
+                "A high-specificity requirement has a reviewable approved project option."
+                if review_candidate is not None
+                else "No compatible replacement exceeded the configured relevance gain."
+            ),
         })
         return decision
     gain_threshold = float(policy["minimum_replacement_gain"])
@@ -201,12 +230,26 @@ def select_tailoring_decision(
             })
             return decision
     if best["gain"] < gain_threshold:
-        status = "review_required" if class_decision == "close_match" else "master_unchanged"
+        review_candidate = _reviewable_requirement_candidate(candidates)
+        status = (
+            "review_required"
+            if class_decision == "close_match" or review_candidate is not None
+            else "master_unchanged"
+        )
         decision.update({
             "tailoring_status": status,
-            "requires_review": class_decision == "close_match" or bool(decision["requires_review"]),
+            "requires_review": (
+                class_decision == "close_match"
+                or review_candidate is not None
+                or bool(decision["requires_review"])
+            ),
             "replacement_gain": round(best["gain"], 4),
-            "reason": "Best compatible replacement was below the configured gain threshold.",
+            "reason": (
+                "A high-specificity requirement has a reviewable approved project option, "
+                "but automatic substitution did not clear the gain threshold."
+                if review_candidate is not None
+                else "Best compatible replacement was below the configured gain threshold."
+            ),
         })
         return decision
     final = [block for block in base_blocks if block != best["removed"]] + [best["inserted"]]
@@ -217,6 +260,11 @@ def select_tailoring_decision(
         "inserted_block": best["inserted"],
         "final_order": final,
         "replacement_gain": round(best["gain"], 4),
+        "counterfactual": counterfactual_gain(
+            candidate_block_id=best["inserted"],
+            removed_block_id=best["removed"],
+            portfolio_scores=portfolio_scores,
+        ),
         "requires_review": (
             class_decision == "close_match"
             or bool(best["requires_review"])
@@ -304,16 +352,25 @@ def score_project_blocks(
     return scores
 
 
-def compatible_candidates(base_family: str, registry: dict[str, Any]) -> list[dict[str, Any]]:
+def compatible_candidates(
+    base_family: str,
+    registry: dict[str, Any],
+    portfolio_scores: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     rules = registry.get("compatibility", {}).get(base_family, {})
+    shortlist = set((portfolio_scores or {}).get("shortlist") or [])
     for removed, entries in rules.items():
         for entry in entries:
+            inserted = str(entry["insert_block_id"])
             result.append({
                 "removed": str(removed),
-                "inserted": str(entry["insert_block_id"]),
+                "inserted": inserted,
                 "requires_review": bool(entry["requires_review"]),
                 "reason": str(entry["reason"]),
+                "shortlist_reason": (
+                    "requirement_aware_shortlist" if inserted in shortlist else None
+                ),
             })
     return result
 
@@ -324,8 +381,13 @@ def best_substitution(
     block_scores: dict[str, dict[str, Any]],
     registry: dict[str, Any],
     policy: dict[str, Any],
+    portfolio_scores: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     by_id = {str(block["block_id"]): block for block in registry["blocks"]}
+    portfolio_by_id = {
+        item["block_id"]: item
+        for item in (portfolio_scores or {}).get("candidate_scores", [])
+    }
     options = []
     for candidate in candidates:
         removed = candidate["removed"]
@@ -337,12 +399,19 @@ def best_substitution(
             final_ids = [block for block in base_blocks if block != removed]
             if inserted_project in {by_id[block]["project_id"] for block in final_ids}:
                 continue
-        gain = float(block_scores[inserted]["score"]) - float(block_scores[removed]["score"])
+        old_gain = float(block_scores[inserted]["score"]) - float(block_scores[removed]["score"])
+        portfolio_gain = (
+            float(portfolio_by_id[inserted]["score"]) - float(portfolio_by_id[removed]["score"])
+            if inserted in portfolio_by_id and removed in portfolio_by_id else old_gain
+        )
+        gain = max(old_gain, portfolio_gain)
         options.append({
             **candidate,
             "gain": gain,
+            "legacy_gain": round(old_gain, 4),
+            "portfolio_gain": round(portfolio_gain, 4),
             "reason": (
-                f"{inserted} improves approved project relevance over {removed} "
+                f"{inserted} improves approved project requirement coverage over {removed} "
                 f"by {gain:.2f}."
             ),
         })
@@ -370,6 +439,13 @@ def ordered_blocks(
             block_id,
         ),
     )
+
+
+def _reviewable_requirement_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for candidate in candidates:
+        if candidate.get("shortlist_reason") and candidate.get("requires_review"):
+            return candidate
+    return None
 
 
 def render_tailored_tex(master_tex: str, final_order: list[str], registry: dict[str, Any]) -> str:

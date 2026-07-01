@@ -37,6 +37,7 @@ class ProjectBlock:
     project_id: str
     display_name: str
     family: str
+    home_family: str
     eligible_families: list[str]
     approved: bool
     immutable: bool
@@ -46,6 +47,10 @@ class ProjectBlock:
     dates: str
     bullets: list[str]
     tags: list[str]
+    capabilities: dict[str, float]
+    bridge_domains: list[list[str]]
+    evidence_terms: list[str]
+    portfolio_strength: float
     render_budget: dict[str, int]
     evidence_refs: list[dict[str, Any]]
     content_hash: str
@@ -280,6 +285,11 @@ def _validate_block_shape(block: Any, index: int) -> None:
     family = str(block["family"])
     if family not in FAMILY_IDS:
         raise ProjectBlockRegistryError(f"unknown project block family: {family}")
+    home_family = str(block.get("home_family") or "")
+    if home_family not in FAMILY_IDS:
+        raise ProjectBlockRegistryError("project block home_family is unknown")
+    if home_family != family:
+        raise ProjectBlockRegistryError("project block home_family must match approved text family")
     if block["source_master"] not in FAMILY_IDS:
         raise ProjectBlockRegistryError("project block source_master is unknown")
     if block.get("approved") is not True:
@@ -296,6 +306,7 @@ def _validate_block_shape(block: Any, index: int) -> None:
     tags = _required_string_list(block.get("tags"), "project block tags")
     if not tags:
         raise ProjectBlockRegistryError("project block tags are required")
+    _validate_portfolio_metadata(block)
     evidence_refs = block.get("evidence_refs")
     if not isinstance(evidence_refs, list):
         raise ProjectBlockRegistryError("project block evidence_refs must be a list")
@@ -394,6 +405,33 @@ def _validate_compatibility(value: Any, by_id: dict[str, dict[str, Any]]) -> Non
                 if not isinstance(rule.get("requires_review"), bool):
                     raise ProjectBlockRegistryError("compatibility requires_review must be boolean")
                 _required_string(rule, "reason", "compatibility rule")
+
+
+def _validate_portfolio_metadata(block: dict[str, Any]) -> None:
+    capabilities = block.get("capabilities")
+    if not isinstance(capabilities, dict) or not capabilities:
+        raise ProjectBlockRegistryError("project block capabilities are required")
+    for capability, weight in capabilities.items():
+        if not isinstance(capability, str) or not capability:
+            raise ProjectBlockRegistryError("project block capability names must be strings")
+        if not isinstance(weight, (int, float)) or not 0.0 <= float(weight) <= 1.0:
+            raise ProjectBlockRegistryError("project block capability weights must be bounded")
+    bridge_domains = block.get("bridge_domains")
+    if not isinstance(bridge_domains, list):
+        raise ProjectBlockRegistryError("project block bridge_domains must be a list")
+    for pair in bridge_domains:
+        if (
+            not isinstance(pair, list)
+            or len(pair) != 2
+            or not all(isinstance(item, str) and item for item in pair)
+        ):
+            raise ProjectBlockRegistryError("project block bridge_domains entries are invalid")
+    evidence_terms = _required_string_list(block.get("evidence_terms"), "evidence_terms")
+    if not evidence_terms:
+        raise ProjectBlockRegistryError("project block evidence_terms are required")
+    strength = block.get("portfolio_strength")
+    if not isinstance(strength, (int, float)) or not 0.0 <= float(strength) <= 1.0:
+        raise ProjectBlockRegistryError("project block portfolio_strength must be bounded")
 
 
 def _validate_tailoring_policy(value: Any) -> None:

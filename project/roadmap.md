@@ -90,6 +90,176 @@ Limitations:
 
 ## Recently completed
 
+### Archived Job Restore/Re-Score and Semantic Requirement Extraction
+Status: complete.
+
+Goal:
+- Make duplicate capture truthful for archived, active, completed, and failed
+  jobs, and add a grounded semantic requirement layer on top of deterministic
+  requirement extraction.
+
+Delivered:
+- Structured duplicate outcomes for archived, active, completed, and failed
+  existing jobs.
+- Owner-scoped restore, re-score, restore-and-re-score, and analysis-history
+  API/service paths.
+- Additive versioned `analysis_runs` persistence and latest-run score
+  filtering so new scoring attempts do not overwrite previous analyses.
+- Restore behavior that preserves prior packets, reviews, regenerated packets,
+  and audit records.
+- Frontend/extension messaging and actions for restore, restore-and-re-score,
+  re-score, and previous analyses.
+- Semantic requirement validation/fusion with approved capability ontology,
+  evidence grounding, negation and generic-language rejection, confidence
+  discounting for semantic-only findings, and conservative reuse by the
+  existing requirement-aware project selector.
+- Offline semantic requirement diagnostic and evaluation command.
+
+Validation evidence:
+- `PYTHONPATH=backend/src pytest backend/tests/unit -q`: 179 passed, 2 skipped.
+- `node frontend/scripts/test-dashboard.mjs`: passed.
+- `python3 scripts/evaluate_cross_domain_portfolio.py`: shortlist recall 1.0,
+  unexpected shortlist rate 0.0, no failures.
+- `PYTHONPATH=backend/src python3 scripts/evaluate_semantic_requirements.py`:
+  capability precision 1.0, capability recall 1.0, false positives 0 on the
+  small fixture set.
+- `./scripts/semantic-requirements-check --no-network`: `simulated_success`.
+- `./scripts/semantic-requirements-check`: safe live failure
+  `response_invalid` with no key printed.
+- `python3 scripts/check.py`: 221 passed, 2 skipped, plus frontend and
+  extension checks.
+- `git diff --check`: passed.
+
+Important limitations:
+- Live semantic requirement success was not verified; semantic fusion remains
+  feature-flagged/fallback-first.
+- The evaluation set is intentionally small and invariant-style, not a broad
+  calibration dataset.
+- True multi-owner same-URL insertion remains constrained by the legacy local
+  unique normalized-URL schema.
+
+### Requirement-Aware Cross-Family Project Portfolio Selection
+Status: complete.
+
+Goal:
+- Decouple base CV-family selection from approved project portfolio selection
+  so cross-domain roles can consider bridge projects without weakening
+  canonical-content guarantees.
+
+Delivered:
+- Added grounded requirement extraction with normalized capabilities,
+  evidence quotes, specificity, importance, differentiation value, and
+  required/preferred source context.
+- Added project portfolio metadata for every approved block: home family,
+  eligible families, bounded capabilities, bridge domains, evidence terms, and
+  portfolio strength.
+- Added requirement-aware portfolio scoring across eligible approved projects,
+  including requirement coverage, specificity coverage, bridge bonus,
+  base-family affinity, shortlist reasons, and counterfactual gain.
+- Preserved one-substitution policy, explicit compatibility checks, exact
+  approved project-block text, immutable master CVs, and one-page validation.
+- Added a Qualcomm-style ML/NPU regression fixture that keeps the ML base CV,
+  shortlists TinyNPU, records NPU/accelerator coverage, and surfaces the
+  option for review when automatic substitution is not justified.
+- Added negative controls for generic ML and pure RTL roles.
+- Updated the frontend to show Base CV and Project Portfolio separately with
+  requirement coverage and alternatives under disclosures.
+- Added `scripts/evaluate_cross_domain_portfolio.py` for offline invariant
+  evaluation.
+
+Validation evidence:
+- `PYTHONPATH=backend/src pytest backend/tests/unit -q`: 171 passed, 2 skipped.
+- `node frontend/scripts/test-dashboard.mjs`: passed.
+- `python3 scripts/evaluate_cross_domain_portfolio.py`: 6 examples,
+  shortlist recall 1.0, unexpected shortlist rate 0.0, no failures.
+- `python3 scripts/check.py`: 213 backend tests passed, 2 skipped, plus
+  frontend and extension checks.
+- `git diff --check`: passed.
+
+Important limitations:
+- Portfolio weights remain deterministic initial policy weights behind the
+  current conservative review/substitution policy; they were not promoted from
+  a broad real-job calibration run.
+- Semantic requirement extraction is not yet active; deterministic extraction
+  provides the current requirement analysis.
+
+### Minimal Retro Frontend and Stage-Based Workflow Redesign
+Status: complete.
+
+Goal:
+- Make the local frontend feel like a minimal, calm, product-like workstation
+  interface centered on one stage-based job pipeline and one obvious next
+  action.
+
+Delivered:
+- Added a central frontend stage model for Added, Analysing role, Choosing CV,
+  Generating packet, Ready, Needs review, Reviewed, Regenerating, Reviewed
+  packet ready, failed/action-needed, and archived states.
+- Redesigned Jobs with a compact list, selected-job panel, current-stage card,
+  text step indicator, key result strip, and one primary action.
+- Hid score bars, deterministic evidence, semantic evidence, packet manifest
+  links, version metadata, and archive/delete behavior behind disclosures.
+- Redesigned Reviews as an inbox with a staged recommendation/change/confirm
+  detail flow.
+- Redesigned System as compact status cards with technical diagnostics under
+  disclosures.
+- Added a CSS custom-property design system for the minimal retro visual style:
+  warm neutral background, thin borders, monospace status labels, square
+  progress markers, restrained green accent, and no fake terminal effects.
+- Updated README with navigation, stage workflow, advanced-detail placement,
+  and visual design intent.
+
+Validation evidence:
+- `node frontend/scripts/test-dashboard.mjs`: passed.
+- `python3 scripts/check.py`: 206 backend tests passed, 2 skipped, plus
+  frontend and extension checks.
+- `./scripts/dev-up --open`: started successfully and served redesigned
+  frontend assets; the stack was stopped cleanly.
+- `git diff --check`: passed.
+
+Important limitations:
+- Interactive browser inspection was limited by tool visibility; validation is
+  based on dev startup logs and deterministic frontend DOM tests.
+
+### Frontend Usability, Demo Cleanup, and Semantic Observability
+Status: complete.
+
+Goal:
+- Make the local dashboard understandable without queue-architecture knowledge,
+  expose semantic success/fallback explicitly, and safely remove demo data.
+
+Delivered:
+- Added `Jobs`, `Reviews`, and `System` top-level navigation.
+- Made Jobs the default master/detail workflow view with summary counts,
+  filters, workflow timeline, selected-job detail, candidate-fit section,
+  CV-family classification section, semantic analysis section, packet section,
+  and progressive diagnostics.
+- Moved worker status, queue diagnostics, semantic LLM configuration, and demo
+  cleanup controls to System.
+- Simplified Reviews while preserving backend-validated review actions and
+  expandable evidence.
+- Added explicit semantic status and safe metadata for live success, disabled,
+  not configured, fallback, request failure, invalid response, timeout, and not
+  attempted states.
+- Added `./scripts/semantic-check` with offline fake mode and live mode that
+  does not print credentials or write to the jobs database.
+- Added job `source_provenance`, demo seeding provenance, owner-scoped
+  clear-demo API/CLI, and conservative individual delete/archive behavior.
+
+Validation evidence:
+- `PYTHONPATH=backend/src pytest backend/tests/unit -q`: 164 passed, 2 skipped.
+- `node frontend/scripts/test-dashboard.mjs`: passed.
+- `./scripts/semantic-check --no-network`: passed with selected family
+  `verification` and evidence count 3.
+- `python3 scripts/check.py`: 206 backend tests passed, 2 skipped, plus
+  frontend and extension checks.
+- `git diff --check`: passed.
+
+Important limitations:
+- Live `./scripts/semantic-check` ran without printing the configured key but
+  returned `request_failed`; live semantic success was not verified in this
+  environment.
+
 ### State Reconstruction and Terminology Normalization
 Status: complete.
 
@@ -432,6 +602,56 @@ Important limitations:
   included in the dev extra for clean release environments.
 - The release remains local-first and owner-scoped; production authentication,
   hosted deployment, and multi-user hardening remain out of scope.
+
+### Local setup and one-command startup simplification
+Status: complete.
+
+Goal:
+- Let a local operator test the complete application, including optional live
+  LLM semantic classification, through repository-root `.env.local`
+  configuration without manually exporting environment variables each session.
+
+Delivered:
+- Added repository-root `.env.local` loading through
+  `jobagent_v2.config.load_local_env`.
+- Added supported `./scripts/setup-local`, `./scripts/dev-down`,
+  `./scripts/dev-status`, and `./scripts/demo-local` commands.
+- Kept `.env.local` and `.runtime/` local-only through explicit gitignore
+  entries.
+- Preserved deterministic offline defaults and operator precedence: exported
+  shell variables win over `.env.local`.
+- Wired local env loading into one-command startup and relevant local CLIs:
+  preflight, database status, API server, worker runner, review regeneration,
+  calibration, and live LLM smoke.
+- Updated README and `.env.example` with the setup-local workflow, isolated
+  local-test database/artifact paths, live semantic opt-in settings,
+  shutdown/status commands, demo seeding, and port-conflict troubleshooting.
+- `dev-up` validates missing/placeholder LLM keys without a live network call,
+  prints only safe LLM configuration status, prefixes child output, and writes
+  ignored PID state for safe shutdown.
+- `dev-down` stops only tracked child processes after live process identity
+  checks where available.
+
+Validation evidence:
+- `PYTHONPATH=backend/src pytest backend/tests/unit/test_release_hardening.py -q`:
+  18 passed.
+- `./scripts/setup-local`: created `.env.local` from `.env.example` after
+  approved pip network access.
+- `./scripts/dev-status`: reported stopped services and missing API key without
+  exposing secrets.
+- `./scripts/dev-up --skip-preflight`: failed helpfully when LLM was enabled
+  and the key was missing.
+- Isolated `./scripts/dev-up --skip-preflight` startup smoke passed with `/tmp`
+  data and alternate ports; `./scripts/dev-down` stopped the tracked API,
+  worker, and frontend PIDs.
+- `./scripts/demo-local`: created 7 jobs in `data/local-test/jobagent.sqlite3`.
+- `python3 scripts/check.py`: 202 backend tests passed, 2 local TeX compile
+  tests skipped, plus frontend and extension checks.
+- `git diff --check`: passed.
+
+Important limitations:
+- Live semantic quality was not credential-tested.
+- `.env.local` is a local convenience, not production secret management.
 
 ### Deterministic one-page validation and fitting
 Status: not started.

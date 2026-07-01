@@ -7,26 +7,56 @@
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
-    <main>
-      <h1>JobAgent V2</h1>
-      <p><button id="process-intake-queue" type="button">Process intake queue</button></p>
-      <section aria-labelledby="workers-heading" class="worker-section">
-        <div class="section-heading">
-          <h2 id="workers-heading">Worker status</h2>
-          <p>Monitor local queue workers and stale-work warnings.</p>
+    <main class="page-shell">
+      <header class="app-header">
+        <div>
+          <p class="brand-mark">JOBAGENT</p>
+          <h1>Jobs</h1>
+          <p>Local role analysis, CV selection, and packet generation.</p>
         </div>
-        <p><button id="refresh-workers" type="button">Refresh workers</button></p>
-        <div id="workers-status" class="status-line" role="status"></div>
-        <div id="workers-list" class="worker-list"></div>
+        <div class="command-bar" aria-label="Global actions">
+          <button id="add-job" class="button-primary" type="button">Add job</button>
+          <button id="refresh-all" class="button-secondary" type="button">Refresh</button>
+        </div>
+      </header>
+      <div id="app-message" class="app-message" role="status" aria-live="polite"></div>
+
+      <nav class="top-nav" aria-label="Primary">
+        <button class="nav-tab is-active" type="button" data-view="jobs">Jobs</button>
+        <button class="nav-tab" type="button" data-view="reviews">Reviews</button>
+        <button class="nav-tab" type="button" data-view="system">System</button>
+      </nav>
+
+      <section id="jobs-view" class="view is-active" aria-labelledby="jobs-heading">
+        <div class="section-heading">
+          <h2 id="jobs-heading">Jobs</h2>
+          <p>Added -> Analysing role -> Choosing CV -> Generating packet -> Ready.</p>
+        </div>
+        <div id="jobs-status" class="status-line" role="status">Loading jobs...</div>
+        <div id="jobs-summary" class="summary-grid"></div>
+        <div class="filters">
+          <label>Filter
+            <select id="job-filter">
+              <option value="all">All active jobs</option>
+              <option value="needs_scoring">Needs scoring</option>
+              <option value="needs_review">Needs review</option>
+              <option value="packet_ready">Packets ready</option>
+            </select>
+          </label>
+        </div>
+        <div class="job-workspace">
+          <div id="jobs-list" class="job-list"></div>
+          <div id="job-detail" class="job-detail"></div>
+        </div>
       </section>
-      <section aria-labelledby="reviews-heading" class="review-section">
+
+      <section id="reviews-view" class="view" aria-labelledby="reviews-heading">
         <div class="section-heading">
-          <h2 id="reviews-heading">Review queue</h2>
-          <p>Review family and project decisions before treating packet changes as final.</p>
+          <h2 id="reviews-heading">Reviews</h2>
+          <p>Review recommendations that need your attention.</p>
         </div>
-        <form id="review-filters" class="review-filters">
-          <label>
-            Status
+        <form id="review-filters" class="filters">
+          <label>Status
             <select id="review-status-filter" name="status">
               <option value="pending">Pending</option>
               <option value="">All</option>
@@ -37,22 +67,20 @@
               <option value="regeneration_failed">Regeneration failed</option>
             </select>
           </label>
-          <label>
-            Type
+          <label>Type
             <select id="review-type-filter" name="review_type">
               <option value="">All</option>
               <option value="classification">Classification</option>
               <option value="tailoring">Tailoring</option>
             </select>
           </label>
-          <label>
-            Family
+          <label>Family
             <select id="review-family-filter" name="family">
               <option value="">All</option>
               <option value="digital_ic">Digital IC / RTL</option>
-              <option value="verification">Verification / SoC Verification</option>
-              <option value="software">Software Engineering</option>
-              <option value="ml">Machine Learning Engineering</option>
+              <option value="verification">Verification</option>
+              <option value="software">Software</option>
+              <option value="ml">Machine Learning</option>
             </select>
           </label>
           <button type="submit">Apply filters</button>
@@ -61,30 +89,19 @@
         <div id="reviews-list" class="review-list"></div>
         <div id="review-detail" class="review-detail"></div>
       </section>
-      <table id="jobs-table">
-        <thead>
-          <tr>
-            <th>Company</th>
-            <th>Title</th>
-            <th>Location</th>
-            <th>Score</th>
-            <th>Recommendation</th>
-            <th>Role</th>
-            <th>CV family</th>
-            <th>Scoring mode</th>
-            <th>Star / priority</th>
-            <th>Q2 eligibility</th>
-            <th>Intake status</th>
-            <th>Q2 task status</th>
-            <th>Promotion reason</th>
-            <th>Packet</th>
-            <th>Reason / warnings</th>
-            <th>Source</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="jobs-body"></tbody>
-      </table>
+
+      <section id="system-view" class="view" aria-labelledby="system-heading">
+        <div class="section-heading">
+          <h2 id="system-heading">System</h2>
+          <p>Operational status and advanced diagnostics.</p>
+        </div>
+        <div class="action-row">
+          <button id="refresh-workers" type="button" class="button-secondary">Refresh system</button>
+          <button id="remove-demo-jobs" type="button" class="danger">Remove demo jobs</button>
+        </div>
+        <div id="workers-status" class="status-line" role="status"></div>
+        <div id="workers-list" class="worker-list"></div>
+      </section>
     </main>
     <script src="./app.js"></script>
   </body>

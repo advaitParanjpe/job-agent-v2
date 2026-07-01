@@ -49,7 +49,10 @@ assertEqual(payload.source_site, "example.com");
 assertEqual(payload.captured_at, "2026-06-19T12:00:00Z");
 assertEqual(payload.evidence.detected_site, "generic");
 assertEqual(extension.outcomeLabel({ duplicate: false }), "Added to queue");
-assertEqual(extension.outcomeLabel({ duplicate: true }), "Already queued");
+assertEqual(extension.outcomeLabel({ duplicate: true }), "Already exists");
+assertEqual(extension.outcomeLabel({ outcome: "existing_active", duplicate: true }), "Already being analysed");
+assertEqual(extension.outcomeLabel({ outcome: "existing_archived", duplicate: true }), "Found in archive");
+assertEqual(extension.outcomeLabel({ outcome: "existing_complete", duplicate: true }), "Already exists");
 
 if (typeof listeners.click !== "function") {
   throw new Error("Add to Queue click listener was not registered");

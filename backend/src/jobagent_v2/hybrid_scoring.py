@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from time import perf_counter
 from typing import Any
 
 from jobagent_v2.llm_client import LLMUnavailableError, SemanticLLMClient
@@ -106,9 +107,20 @@ def score_hybrid_job(
     )
     diagnostics: dict[str, Any] = {
         "scoring_mode": mode,
+        "semantic_status": "disabled" if not client.config.enabled else "not_configured"
+        if not client.config.api_key else "not_attempted",
+        "semantic_attempted": False,
+        "semantic_enabled": bool(client.config.enabled),
+        "fallback_used": not client.config.enabled or not client.config.api_key,
         "llm_call_status": "not_called",
         "llm_failure_reason": None,
+        "failure_code": None,
+        "failure_summary": None,
+        "provider": "openai",
         "model": client.config.model,
+        "started_at": None,
+        "completed_at": None,
+        "latency_ms": None,
         "prompt_version": PROMPT_VERSION,
         "semantic_schema_version": SEMANTIC_SCHEMA_VERSION,
         "semantic_assessment": None,
@@ -117,13 +129,28 @@ def score_hybrid_job(
         "family_decision": None,
     }
     try:
+        from jobagent_v2.util import utc_now_iso
+
+        diagnostics["started_at"] = utc_now_iso()
+        diagnostics["semantic_attempted"] = bool(client.config.enabled and client.config.api_key)
+        start = perf_counter()
         assessment = validate_semantic_assessment(
             client.assess(build_prompt(job, deterministic)),
             {item["block_id"] for item in deterministic.block_scores},
         )
+        diagnostics["completed_at"] = utc_now_iso()
+        diagnostics["latency_ms"] = round((perf_counter() - start) * 1000)
     except (LLMUnavailableError, SemanticValidationError) as error:
-        diagnostics["llm_call_status"] = "unavailable"
-        diagnostics["llm_failure_reason"] = str(error)
+        message = str(error)
+        status = _semantic_failure_status(message, client)
+        diagnostics.update({
+            "semantic_status": status,
+            "fallback_used": True,
+            "llm_call_status": "unavailable",
+            "llm_failure_reason": message,
+            "failure_code": status,
+            "failure_summary": _safe_summary(message),
+        })
         return with_hybrid_diagnostics(deterministic, diagnostics)
     decision = hybrid_family_decision(deterministic.selection, assessment)
     semantic_by_block = {
@@ -163,6 +190,8 @@ def score_hybrid_job(
     diagnostics.update(
         {
             "scoring_mode": "hybrid",
+            "semantic_status": "live_success",
+            "fallback_used": False,
             "llm_call_status": "success",
             "semantic_assessment": assessment,
             "llm_family": {
@@ -210,3 +239,23 @@ def recommendation_for(score: int, blockers: list[str]) -> str:
 
 def with_hybrid_diagnostics(result: ScoringResult, diagnostics: dict[str, Any]) -> ScoringResult:
     return replace(result, score_breakdown={**result.score_breakdown, "hybrid": diagnostics})
+
+
+def _semantic_failure_status(message: str, client: SemanticLLMClient) -> str:
+    lowered = message.lower()
+    if not client.config.enabled:
+        return "disabled"
+    if not client.config.api_key or "key is missing" in lowered:
+        return "not_configured"
+    if "timed out" in lowered or "timeout" in lowered:
+        return "timed_out"
+    if "missing required fields" in lowered or "invalid" in lowered or "malformed" in lowered:
+        return "response_invalid"
+    if "failed" in lowered or "provider request" in lowered:
+        return "request_failed"
+    return "fallback_used"
+
+
+def _safe_summary(message: str) -> str:
+    text = " ".join(message.split())
+    return text[:240]

@@ -37,6 +37,14 @@ The master CV is used unchanged when:
 Close matches keep the selected family as the base and require review.
 Low-confidence jobs use the master unchanged and require review.
 
+Requirement-aware cross-family substitutions are conservative. One automatic
+substitution is allowed only when the inserted block is eligible for the base
+family, the approved compatibility pair is valid, a high-importance
+requirement would gain coverage, the gain clears the configured threshold, and
+one-page immutable-section validation passes. If a cross-family bridge project
+is relevant but the automatic margin is not strong enough, the decision is
+recorded as review-required instead of silently changing the packet.
+
 ## Thresholds
 
 Thresholds live in `backend/src/jobagent_v2/data/tailoring_policy.json`.
@@ -68,6 +76,24 @@ The engine rejects:
 
 ## Scoring
 
+Project selection is separated from base CV-family selection:
+
+1. The family classifier selects the approved master CV that best frames the
+   role.
+2. The requirement extractor identifies grounded job capabilities such as
+   machine learning, quantization, edge AI, NPUs, hardware acceleration, RTL,
+   verification, compiler/runtime work, Python, and C++. Deterministic
+   extraction is always available; optional semantic requirement extraction can
+   add grounded paraphrased requirements only after evidence quotes and
+   approved capability names validate.
+3. The portfolio scorer evaluates eligible approved project blocks across the
+   registry, not only blocks whose home family matches the base CV.
+
+The base family remains the narrative and skills anchor. It is a small scoring
+preference for projects, not a hard eligibility boundary. For example, an ML
+base CV can shortlist an approved Digital IC home-family bridge project when
+the job explicitly values NPUs or ML accelerators.
+
 Only registered approved blocks are scored. The deterministic scorer uses:
 
 - responsibilities;
@@ -76,9 +102,24 @@ Only registered approved blocks are scored. The deterministic scorer uses:
 - project identifiers and headings;
 - family-classifier evidence.
 
-The score is not a crude total keyword count. Responsibilities and domain
-signals carry the most weight. If semantic scoring is unavailable, no semantic
+The requirement-aware scorer additionally records requirement coverage,
+specificity coverage, bridge bonus, base-family affinity, counterfactual
+coverage gain, and shortlist reasons. The score is not a crude total keyword
+count. Responsibilities and high-specificity requirements carry more weight
+than repeated generic language. If semantic scoring is unavailable, no semantic
 rationale is recorded.
+
+High-specificity requirements such as NPUs, ML accelerators, UVM, cache
+coherence, quantization, CUDA/kernel optimization, RTL synthesis, and
+on-device inference can place matching approved projects on the candidate
+shortlist. Shortlisting means "must be evaluated"; it does not force automatic
+selection.
+
+Semantic-only requirements use a confidence discount and must clear stronger
+grounding/specificity checks. They may improve scores, shortlist a project, or
+trigger review, but they cannot force a final project into a CV or bypass
+approved compatibility pairs, the one-substitution limit, immutable project
+text, or packet validation.
 
 ## Reordering
 
@@ -127,6 +168,10 @@ The audit includes:
 - fallback reason;
 - Phase D policy version;
 - project-registry schema and policy versions.
+- extracted requirements and role dimensions when requirement-aware analysis
+  was available;
+- candidate project scores, shortlist reasons, and counterfactual gain for
+  requirement-aware portfolio decisions.
 
 Statuses include `master_unchanged`, `tailored`, `review_required`,
 `fallback_to_master`, and `tailoring_rejected`.

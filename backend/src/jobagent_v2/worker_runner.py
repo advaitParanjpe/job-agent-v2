@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
+from jobagent_v2.config import RuntimeConfig, load_local_env
 from jobagent_v2.promotion import PromotionConfig
 from jobagent_v2.regeneration_worker import ReviewRegenerationWorker
 from jobagent_v2.storage import Repository
@@ -275,9 +276,11 @@ def _float_env(name: str, default: float) -> float:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_local_env()
+    runtime_config = RuntimeConfig.from_env()
     parser = argparse.ArgumentParser(description="Run local JobAgent worker loops.")
-    parser.add_argument("--db-path", default="data/jobagent_v2.sqlite3")
-    parser.add_argument("--artifact-root", default="data/artifacts")
+    parser.add_argument("--db-path", default=str(runtime_config.db_path))
+    parser.add_argument("--artifact-root", default=str(runtime_config.artifact_dir))
     parser.add_argument("--worker", choices=sorted(WORKER_TYPES))
     parser.add_argument("--all", action="store_true", help="Run all worker types in one loop.")
     parser.add_argument("--once", action="store_true", help="Run one polling iteration.")

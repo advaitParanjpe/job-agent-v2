@@ -24,7 +24,7 @@ from jobagent_v2.url_utils import normalize_url, source_site_from_url
 from jobagent_v2.util import utc_now_iso
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 13
 REGENERATION_MAX_ATTEMPTS = 3
 REGENERATION_RETRYABLE_ERRORS = {
     "temporary_artifact_write_failure",
@@ -95,6 +95,7 @@ class Repository:
                     page_title TEXT NOT NULL,
                     raw_visible_text TEXT NOT NULL,
                     source_site TEXT,
+                    source_provenance TEXT NOT NULL DEFAULT 'manual',
                     capture_evidence_json TEXT,
                     detected_site TEXT,
                     extraction_candidates_json TEXT,
@@ -166,6 +167,7 @@ class Repository:
                 CREATE TABLE IF NOT EXISTS job_scores (
                     id TEXT PRIMARY KEY,
                     job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    analysis_run_id TEXT,
                     scoring_version TEXT NOT NULL,
                     structured_jd_json TEXT NOT NULL,
                     family_selection_json TEXT NOT NULL,
@@ -180,6 +182,7 @@ class Repository:
                 CREATE TABLE IF NOT EXISTS job_semantic_assessments (
                     id TEXT PRIMARY KEY,
                     job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    analysis_run_id TEXT,
                     scoring_version TEXT NOT NULL,
                     scoring_mode TEXT NOT NULL,
                     llm_call_status TEXT NOT NULL,
@@ -197,6 +200,7 @@ class Repository:
                 CREATE TABLE IF NOT EXISTS job_family_classifications (
                     id TEXT PRIMARY KEY,
                     job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    analysis_run_id TEXT,
                     classifier_version TEXT NOT NULL,
                     config_version TEXT NOT NULL,
                     family_scores_json TEXT NOT NULL,
@@ -211,6 +215,33 @@ class Repository:
                     semantic_scores_json TEXT,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS analysis_runs (
+                    id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    owner_id TEXT NOT NULL,
+                    trigger TEXT NOT NULL,
+                    source_content_version TEXT,
+                    status TEXT NOT NULL,
+                    candidate_fit_json TEXT,
+                    family_classification_json TEXT,
+                    semantic_requirements_json TEXT,
+                    fused_requirements_json TEXT,
+                    project_portfolio_json TEXT,
+                    packet_id TEXT,
+                    failure_code TEXT,
+                    failure_reason TEXT,
+                    policy_versions_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_analysis_runs_one_active
+                ON analysis_runs(job_id)
+                WHERE status IN ('queued', 'running');
+                CREATE INDEX IF NOT EXISTS idx_analysis_runs_job_created
+                ON analysis_runs(job_id, created_at DESC);
 
                 CREATE TABLE IF NOT EXISTS q2_tasks (
                     id TEXT PRIMARY KEY,
@@ -412,6 +443,7 @@ class Repository:
                 ("schema_version", str(SCHEMA_VERSION)),
             )
             self._ensure_columns(connection)
+            self._mark_legacy_demo_seed_jobs(connection)
             connection.execute(
                 """CREATE UNIQUE INDEX IF NOT EXISTS idx_packets_regen_idempotency
                 ON packets(idempotency_key)
@@ -425,6 +457,7 @@ class Repository:
             "owner_id": "TEXT NOT NULL DEFAULT 'local'",
             "duplicate_key": "TEXT",
             "capture_evidence_json": "TEXT",
+            "source_provenance": "TEXT NOT NULL DEFAULT 'manual'",
             "detected_site": "TEXT",
             "extraction_candidates_json": "TEXT",
             "duplicate_warning": "TEXT",
@@ -466,6 +499,7 @@ class Repository:
             "priority_updated_at": "TEXT",
             "promotion_reason": "TEXT",
             "current_packet_id": "TEXT",
+            "current_analysis_run_id": "TEXT",
         }
         for name, ddl in columns.items():
             if name not in existing:
@@ -485,6 +519,15 @@ class Repository:
         for name, ddl in packet_columns.items():
             if name not in packet_existing:
                 connection.execute(f"ALTER TABLE packets ADD COLUMN {name} {ddl}")
+        for table in ("job_scores", "job_semantic_assessments", "job_family_classifications"):
+            rows = connection.execute(f"PRAGMA table_info({table})").fetchall()
+            existing = {row["name"] for row in rows}
+            if "analysis_run_id" not in existing:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN analysis_run_id TEXT")
+        block_rows = connection.execute("PRAGMA table_info(job_block_scores)").fetchall()
+        block_existing = {row["name"] for row in block_rows}
+        if "analysis_run_id" not in block_existing:
+            connection.execute("ALTER TABLE job_block_scores ADD COLUMN analysis_run_id TEXT")
         resolution_rows = connection.execute("PRAGMA table_info(review_resolutions)").fetchall()
         resolution_existing = {row["name"] for row in resolution_rows}
         resolution_columns = {
@@ -513,6 +556,17 @@ class Repository:
         for name, ddl in regen_columns.items():
             if name not in regen_existing:
                 connection.execute(f"ALTER TABLE review_regeneration_jobs ADD COLUMN {name} {ddl}")
+
+    def _mark_legacy_demo_seed_jobs(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            UPDATE jobs
+            SET source_provenance = 'demo'
+            WHERE source_provenance = 'manual'
+              AND source_url LIKE 'https://example.test/demo/%'
+              AND source_site = 'example.test'
+            """
+        )
 
     def register_worker_instance(
         self,
@@ -738,13 +792,14 @@ class Repository:
                 """
                 INSERT INTO jobs (
                     id, source_url, normalized_url, owner_id, page_title, raw_visible_text,
-                    source_site, capture_evidence_json, detected_site, duplicate_key,
+                    source_site, source_provenance, capture_evidence_json,
+                    detected_site, duplicate_key,
                     company, title, role_family, overall_score,
                     recommendation, reason, intake_status, packet_status,
                     manual_priority, placeholder_artifact_path, archived_at,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -754,6 +809,7 @@ class Repository:
                     payload.page_title,
                     payload.visible_text,
                     site,
+                    _source_provenance(payload.evidence),
                     json.dumps(payload.evidence, sort_keys=True),
                     str(payload.evidence.get("detected_site") or site or ""),
                     normalized_url,
@@ -784,10 +840,72 @@ class Repository:
                     "captured_at": payload.captured_at,
                 },
             )
+            run_id = self._insert_analysis_run(
+                connection,
+                job_id=job_id,
+                owner_id=str(payload.evidence.get("owner_id") or "local"),
+                trigger="initial_capture",
+                status="queued",
+            )
+            self._update_job(connection, job_id, {"current_analysis_run_id": run_id})
             row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if row is None:
                 raise JobNotFoundError(job_id)
             return row_to_job(row), False
+
+    def capture_outcome(self, job: dict[str, Any], *, duplicate: bool) -> dict[str, Any]:
+        if not duplicate:
+            return {
+                "outcome": "created",
+                "job_state": "active",
+                "active_run": True,
+                "analysis_run": self.get_active_analysis_run(str(job["id"])),
+                "allowed_actions": ["open_existing"],
+                "message": "Job added for analysis.",
+            }
+        active_run = self.get_active_analysis_run(str(job["id"]))
+        intake_status = str(job.get("intake_status") or "")
+        archived = bool(job.get("archived_at"))
+        if archived:
+            return {
+                "outcome": "existing_archived",
+                "job_state": "archived",
+                "active_run": active_run is not None,
+                "analysis_run": active_run,
+                "allowed_actions": ["restore", "restore_and_rescore", "open_existing"],
+                "message": "This job is in your archive.",
+            }
+        if active_run is not None or intake_status in {
+            "queued",
+            "extracting",
+            "structuring",
+            "scoring",
+        }:
+            return {
+                "outcome": "existing_active",
+                "job_state": "active",
+                "active_run": True,
+                "analysis_run": active_run,
+                "allowed_actions": ["open_existing"],
+                "message": "This job is already being analysed.",
+            }
+        if intake_status in {"failed", "manual_review"}:
+            return {
+                "outcome": "existing_failed",
+                "job_state": "failed",
+                "active_run": False,
+                "analysis_run": None,
+                "allowed_actions": ["rescore", "open_existing"],
+                "message": "This job previously failed.",
+            }
+        return {
+            "outcome": "existing_complete",
+            "job_state": "complete",
+            "active_run": False,
+            "analysis_run": None,
+            "allowed_actions": ["rescore", "archive", "open_existing"],
+            "message": "This job already exists.",
+        }
 
     def get_job(self, job_id: str) -> dict[str, Any]:
         with self.connect() as connection:
@@ -806,6 +924,66 @@ class Repository:
             rows = connection.execute(query, params).fetchall()
         return [row_to_job(row) for row in rows]
 
+    def demo_cleanup_preview(self, *, owner_id: str = "local") -> dict[str, Any]:
+        with self.connect() as connection:
+            job_rows = connection.execute(
+                "SELECT id FROM jobs WHERE owner_id = ? AND source_provenance = 'demo'",
+                (owner_id,),
+            ).fetchall()
+            job_ids = [str(row["id"]) for row in job_rows]
+            if not job_ids:
+                return {
+                    "owner_id": owner_id,
+                    "job_count": 0,
+                    "review_count": 0,
+                    "packet_count": 0,
+                    "artifact_directories": [],
+                }
+            placeholders = ",".join("?" for _ in job_ids)
+            review_count = connection.execute(
+                f"SELECT count(*) AS count FROM review_items WHERE job_id IN ({placeholders})",
+                tuple(job_ids),
+            ).fetchone()["count"]
+            packet_rows = connection.execute(
+                f"SELECT artifact_directory FROM packets WHERE job_id IN ({placeholders})",
+                tuple(job_ids),
+            ).fetchall()
+        artifact_dirs = sorted({
+            str(row["artifact_directory"])
+            for row in packet_rows
+            if row["artifact_directory"]
+        })
+        return {
+            "owner_id": owner_id,
+            "job_count": len(job_ids),
+            "review_count": int(review_count),
+            "packet_count": len(packet_rows),
+            "artifact_directories": artifact_dirs,
+        }
+
+    def clear_demo_jobs(self, *, owner_id: str = "local") -> dict[str, Any]:
+        preview = self.demo_cleanup_preview(owner_id=owner_id)
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT id FROM jobs WHERE owner_id = ? AND source_provenance = 'demo'",
+                (owner_id,),
+            ).fetchall()
+            for row in rows:
+                connection.execute("DELETE FROM jobs WHERE id = ?", (row["id"],))
+        return preview
+
+    def delete_or_archive_job(self, job_id: str, *, owner_id: str = "local") -> dict[str, Any]:
+        with self.connect() as connection:
+            row = self._get_job_row(connection, job_id)
+            if row["owner_id"] != owner_id:
+                raise JobNotFoundError(job_id)
+            if row["source_provenance"] in {"demo", "test"}:
+                job = row_to_job(row)
+                connection.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+                return {**job, "deleted": True, "archived": False}
+        archived = self.archive_job(job_id)
+        return {**archived, "deleted": False, "archived": True}
+
     def list_events(self, job_id: str) -> list[dict[str, Any]]:
         self.get_job(job_id)
         with self.connect() as connection:
@@ -814,6 +992,31 @@ class Repository:
                 (job_id,),
             ).fetchall()
         return [row_to_event(row) for row in rows]
+
+    def record_project_reanalysis(self, job_id: str, decision: dict[str, Any]) -> None:
+        with self.connect() as connection:
+            job = self._get_job_row(connection, job_id)
+            self._insert_event(
+                connection,
+                job_id=job_id,
+                event_type="project_selection_reanalyzed",
+                from_status=job["packet_status"],
+                to_status=job["packet_status"],
+                message=(
+                    "Requirement-aware project selection was re-analysed "
+                    "without generating a packet."
+                ),
+                metadata={
+                    "base_family": decision.get("base_family"),
+                    "tailoring_status": decision.get("tailoring_status"),
+                    "requires_review": bool(decision.get("requires_review")),
+                    "shortlist": (decision.get("project_portfolio") or {}).get("shortlist", []),
+                    "inserted_block": decision.get("inserted_block"),
+                    "removed_block": decision.get("removed_block"),
+                    "policy_version": decision.get("policy_version"),
+                    "registry_version": decision.get("registry_version"),
+                },
+            )
 
     def transition_intake(
         self,
@@ -1947,6 +2150,204 @@ class Repository:
             updated = self._get_job_row(connection, job_id)
         return row_to_job(updated)
 
+    def restore_job(self, job_id: str, *, owner_id: str = "local") -> dict[str, Any]:
+        with self.connect() as connection:
+            row = self._get_job_row(connection, job_id)
+            if row["owner_id"] != owner_id:
+                raise JobNotFoundError(job_id)
+            if row["archived_at"] is not None:
+                self._update_job(connection, job_id, {"archived_at": None})
+                self._insert_event(
+                    connection,
+                    job_id=job_id,
+                    event_type="job_restored",
+                    from_status=None,
+                    to_status=None,
+                    message="Archived job restored to the active dashboard.",
+                    metadata={},
+                )
+            updated = self._get_job_row(connection, job_id)
+        return row_to_job(updated)
+
+    def start_analysis_run(
+        self,
+        job_id: str,
+        *,
+        owner_id: str = "local",
+        trigger: str,
+        restore: bool = False,
+    ) -> tuple[dict[str, Any], bool]:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            row = self._get_job_row(connection, job_id)
+            if row["owner_id"] != owner_id:
+                raise JobNotFoundError(job_id)
+            if restore and row["archived_at"] is not None:
+                self._update_job(connection, job_id, {"archived_at": None})
+                self._insert_event(
+                    connection,
+                    job_id=job_id,
+                    event_type="job_restored",
+                    from_status=None,
+                    to_status=None,
+                    message="Archived job restored to the active dashboard.",
+                    metadata={"trigger": trigger},
+                )
+                row = self._get_job_row(connection, job_id)
+            if row["archived_at"] is not None:
+                raise ValueError("archived jobs must be restored before re-scoring")
+            active = connection.execute(
+                "SELECT * FROM analysis_runs WHERE job_id = ? "
+                "AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            if active is not None:
+                return row_to_analysis_run(active), False
+            run_id = self._insert_analysis_run(
+                connection,
+                job_id=job_id,
+                owner_id=owner_id,
+                trigger=trigger,
+                status="queued",
+            )
+            self._update_job(
+                connection,
+                job_id,
+                {
+                    "current_analysis_run_id": run_id,
+                    "intake_status": "queued",
+                    "reason": "Queued for re-analysis.",
+                    "failure_reason": None,
+                    "manual_review_reason": None,
+                    "scoring_status": "queued",
+                },
+            )
+            self._insert_event(
+                connection,
+                job_id=job_id,
+                event_type="analysis_run_queued",
+                from_status=row["intake_status"],
+                to_status="queued",
+                message="Analysis run queued.",
+                metadata={"analysis_run_id": run_id, "trigger": trigger},
+            )
+            created = connection.execute(
+                "SELECT * FROM analysis_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        return row_to_analysis_run(created), True
+
+    def get_active_analysis_run(self, job_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM analysis_runs WHERE job_id = ? "
+                "AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+        return row_to_analysis_run(row) if row else None
+
+    def mark_analysis_run_running(self, job_id: str) -> dict[str, Any] | None:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM analysis_runs WHERE job_id = ? AND status = 'queued' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                job = self._get_job_row(connection, job_id)
+                run_id = self._insert_analysis_run(
+                    connection,
+                    job_id=job_id,
+                    owner_id=job["owner_id"],
+                    trigger="legacy_queue",
+                    status="running",
+                    started_at=now,
+                )
+                self._update_job(connection, job_id, {"current_analysis_run_id": run_id})
+                row = connection.execute(
+                    "SELECT * FROM analysis_runs WHERE id = ?", (run_id,)
+                ).fetchone()
+            else:
+                connection.execute(
+                    "UPDATE analysis_runs SET status='running', "
+                    "started_at=COALESCE(started_at, ?), updated_at=? WHERE id=?",
+                    (now, now, row["id"]),
+                )
+                row = connection.execute(
+                    "SELECT * FROM analysis_runs WHERE id = ?", (row["id"],)
+                ).fetchone()
+        return row_to_analysis_run(row) if row else None
+
+    def complete_analysis_run(self, job_id: str, result: Any) -> None:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM analysis_runs WHERE job_id = ? "
+                "AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                return
+            hybrid = result.score_breakdown.get("hybrid", {})
+            tailoring = self.get_tailoring_decision(job_id)
+            connection.execute(
+                """UPDATE analysis_runs SET status='complete', completed_at=?,
+                updated_at=?, candidate_fit_json=?, family_classification_json=?,
+                semantic_requirements_json=?, fused_requirements_json=?,
+                project_portfolio_json=?, policy_versions_json=? WHERE id=?""",
+                (
+                    now,
+                    now,
+                    json.dumps({
+                        "overall_score": result.overall_score,
+                        "recommendation": result.recommendation,
+                        "scoring_version": result.score_breakdown.get("formula_version"),
+                    }, sort_keys=True),
+                    json.dumps(
+                        getattr(result, "family_classification", {}) or {},
+                        sort_keys=True,
+                    ),
+                    json.dumps(hybrid.get("requirement_extraction") or {}, sort_keys=True),
+                    json.dumps(hybrid.get("fused_requirements") or {}, sort_keys=True),
+                    json.dumps(
+                        (tailoring or {}).get("decision", {}).get("project_portfolio", {}),
+                        sort_keys=True,
+                    ),
+                    json.dumps({
+                        "scoring": result.score_breakdown.get("formula_version"),
+                        "hybrid": result.score_breakdown.get("hybrid_formula_version"),
+                    }, sort_keys=True),
+                    row["id"],
+                ),
+            )
+
+    def fail_analysis_run(self, job_id: str, *, code: str, reason: str) -> None:
+        now = utc_now_iso()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM analysis_runs WHERE job_id = ? "
+                "AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                return
+            connection.execute(
+                """UPDATE analysis_runs SET status='failed', failure_code=?,
+                failure_reason=?, completed_at=?, updated_at=? WHERE id=?""",
+                (code, _safe_failure_reason(reason), now, now, row["id"]),
+            )
+
+    def list_analysis_runs(self, job_id: str, *, owner_id: str = "local") -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            job = self._get_job_row(connection, job_id)
+            if job["owner_id"] != owner_id:
+                raise JobNotFoundError(job_id)
+            rows = connection.execute(
+                "SELECT * FROM analysis_runs WHERE job_id = ? ORDER BY created_at DESC",
+                (job_id,),
+            ).fetchall()
+        return [row_to_analysis_run(row) for row in rows]
+
     def retry_job(self, job_id: str) -> dict[str, Any]:
         with self.connect() as connection:
             row = self._get_job_row(connection, job_id)
@@ -2015,19 +2416,23 @@ class Repository:
     def save_scoring_result(self, job_id: str, result: Any) -> None:
         now = utc_now_iso()
         with self.connect() as connection:
-            self._get_job_row(connection, job_id)
-            connection.execute("DELETE FROM job_block_scores WHERE job_id = ?", (job_id,))
+            job = self._get_job_row(connection, job_id)
+            analysis_run_id = job["current_analysis_run_id"]
             for block in result.block_scores:
                 connection.execute(
                     """INSERT INTO job_block_scores (
-                    id, job_id, scoring_version, block_id, block_type, block_name,
+                    id, job_id, analysis_run_id, scoring_version, block_id, block_type, block_name,
                     technical_match, keyword_match, responsibility_match, evidence_strength,
                     seniority_fit, recency, impressiveness, domain_match, risk_of_overclaim,
                     aggregate_score, reason, matched_requirements_json, unmatched_requirements_json,
                     created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), job_id, block["scoring_version"], block["block_id"],
+                        str(uuid4()),
+                        job_id,
+                        analysis_run_id,
+                        block["scoring_version"],
+                        block["block_id"],
                         block["block_type"], block["block_name"], block["technical_match"],
                         block["keyword_match"], block["responsibility_match"],
                         block["evidence_strength"], block["seniority_fit"], block["recency"],
@@ -2037,19 +2442,18 @@ class Repository:
                         json.dumps(block["unmatched_requirements"]), now,
                     ),
                 )
-            connection.execute("DELETE FROM job_scores WHERE job_id = ?", (job_id,))
             hybrid = result.score_breakdown.get("hybrid", {})
-            connection.execute("DELETE FROM job_semantic_assessments WHERE job_id = ?", (job_id,))
             connection.execute(
                 """INSERT INTO job_semantic_assessments (
-                id, job_id, scoring_version, scoring_mode, llm_call_status,
+                id, job_id, analysis_run_id, scoring_version, scoring_mode, llm_call_status,
                 llm_failure_reason, model_name, prompt_version, semantic_schema_version,
                 deterministic_family_json, llm_family_json, family_decision_json,
                 semantic_assessment_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(uuid4()),
                     job_id,
+                    analysis_run_id,
                     result.score_breakdown.get(
                         "hybrid_formula_version", "phase3-deterministic-v1"
                     ),
@@ -2072,20 +2476,19 @@ class Repository:
             )
             classification = getattr(result, "family_classification", {}) or {}
             if classification:
-                connection.execute(
-                    "DELETE FROM job_family_classifications WHERE job_id = ?", (job_id,)
-                )
                 classification_id = str(uuid4())
                 connection.execute(
                     """INSERT INTO job_family_classifications (
-                    id, job_id, classifier_version, config_version, family_scores_json,
+                    id, job_id, analysis_run_id, classifier_version, config_version,
+                    family_scores_json,
                     selected_family, secondary_family, confidence, decision, requires_review,
                     rule_evidence_json, semantic_evidence_json, deterministic_scores_json,
                     semantic_scores_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         classification_id,
                         job_id,
+                        analysis_run_id,
                         classification["classifier_version"],
                         classification["config_version"],
                         json.dumps(classification["family_scores"], sort_keys=True),
@@ -2119,11 +2522,12 @@ class Repository:
                     )
             connection.execute(
                 """INSERT INTO job_scores (
-                id, job_id, scoring_version, structured_jd_json, family_selection_json,
+                id, job_id, analysis_run_id, scoring_version, structured_jd_json,
+                family_selection_json,
                 section_scores_json, score_breakdown_json, strengths_json, gaps_json,
-                hard_blockers_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                hard_blockers_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid4()), job_id, "phase3-deterministic-v1",
+                    str(uuid4()), job_id, analysis_run_id, "phase3-deterministic-v1",
                     json.dumps(result.structured_jd, sort_keys=True),
                     json.dumps(result.selection, sort_keys=True),
                     json.dumps(result.section_scores, sort_keys=True),
@@ -2201,6 +2605,19 @@ class Repository:
 
     def list_block_scores(self, job_id: str) -> list[dict[str, Any]]:
         with self.connect() as connection:
+            latest = connection.execute(
+                "SELECT analysis_run_id FROM job_scores WHERE job_id = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (job_id,),
+            ).fetchone()
+            run_id = latest["analysis_run_id"] if latest else None
+            if run_id:
+                rows = connection.execute(
+                    "SELECT * FROM job_block_scores WHERE job_id = ? "
+                    "AND analysis_run_id = ? ORDER BY aggregate_score DESC",
+                    (job_id, run_id),
+                ).fetchall()
+                return [row_to_block_score(row) for row in rows]
             rows = connection.execute(
                 "SELECT * FROM job_block_scores WHERE job_id = ? ORDER BY aggregate_score DESC",
                 (job_id,),
@@ -2276,6 +2693,40 @@ class Repository:
             f"UPDATE jobs SET {assignments} WHERE id = ?",
             (*values.values(), job_id),
         )
+
+    def _insert_analysis_run(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        job_id: str,
+        owner_id: str,
+        trigger: str,
+        status: str,
+        started_at: str | None = None,
+    ) -> str:
+        now = utc_now_iso()
+        run_id = str(uuid4())
+        job = self._get_job_row(connection, job_id)
+        connection.execute(
+            """INSERT INTO analysis_runs (
+                id, job_id, owner_id, trigger, source_content_version, status,
+                policy_versions_json, created_at, started_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                run_id,
+                job_id,
+                owner_id,
+                trigger,
+                job["jd_text_fingerprint"] or job["normalized_url"],
+                status,
+                json.dumps({"analysis_run_schema": "analysis-run-v1"}, sort_keys=True),
+                now,
+                started_at,
+                now,
+            ),
+        )
+        return run_id
 
     def _insert_event(
         self,
@@ -2570,6 +3021,7 @@ def row_to_job(row: sqlite3.Row) -> dict[str, Any]:
         "page_title": row["page_title"],
         "raw_visible_text": row["raw_visible_text"],
         "source_site": row["source_site"],
+        "source_provenance": row["source_provenance"],
         "capture_evidence": json.loads(row["capture_evidence_json"])
         if row["capture_evidence_json"]
         else {},
@@ -2644,6 +3096,7 @@ def row_to_job(row: sqlite3.Row) -> dict[str, Any]:
         "priority_updated_at": row["priority_updated_at"],
         "promotion_reason": row["promotion_reason"],
         "current_packet_id": row["current_packet_id"],
+        "current_analysis_run_id": row["current_analysis_run_id"],
         "placeholder_artifact_path": row["placeholder_artifact_path"],
         "archived_at": row["archived_at"],
         "created_at": row["created_at"],
@@ -2695,9 +3148,47 @@ def row_to_packet(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def row_to_analysis_run(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "analysis_run_id": row["id"],
+        "job_id": row["job_id"],
+        "owner_id": row["owner_id"],
+        "trigger": row["trigger"],
+        "source_content_version": row["source_content_version"],
+        "status": row["status"],
+        "candidate_fit": json.loads(row["candidate_fit_json"])
+        if row["candidate_fit_json"]
+        else None,
+        "family_classification": json.loads(row["family_classification_json"])
+        if row["family_classification_json"]
+        else None,
+        "semantic_requirements": json.loads(row["semantic_requirements_json"])
+        if row["semantic_requirements_json"]
+        else None,
+        "fused_requirements": json.loads(row["fused_requirements_json"])
+        if row["fused_requirements_json"]
+        else None,
+        "project_portfolio": json.loads(row["project_portfolio_json"])
+        if row["project_portfolio_json"]
+        else None,
+        "packet_id": row["packet_id"],
+        "failure_code": row["failure_code"],
+        "failure_reason": row["failure_reason"],
+        "policy_versions": json.loads(row["policy_versions_json"])
+        if row["policy_versions_json"]
+        else {},
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
 def row_to_score(row: sqlite3.Row) -> dict[str, Any]:
     return {
-        "job_id": row["job_id"], "scoring_version": row["scoring_version"],
+        "job_id": row["job_id"], "analysis_run_id": row["analysis_run_id"],
+        "scoring_version": row["scoring_version"],
         "structured_jd": json.loads(row["structured_jd_json"]),
         "family_selection": json.loads(row["family_selection_json"]),
         "section_scores": json.loads(row["section_scores_json"]),
@@ -2709,7 +3200,8 @@ def row_to_score(row: sqlite3.Row) -> dict[str, Any]:
 
 def row_to_semantic_assessment(row: sqlite3.Row) -> dict[str, Any]:
     return {
-        "job_id": row["job_id"], "scoring_version": row["scoring_version"],
+        "job_id": row["job_id"], "analysis_run_id": row["analysis_run_id"],
+        "scoring_version": row["scoring_version"],
         "scoring_mode": row["scoring_mode"], "llm_call_status": row["llm_call_status"],
         "llm_failure_reason": row["llm_failure_reason"], "model": row["model_name"],
         "prompt_version": row["prompt_version"],
@@ -2730,6 +3222,7 @@ def row_to_family_classification(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": row["id"],
         "job_id": row["job_id"],
+        "analysis_run_id": row["analysis_run_id"],
         "classifier_version": row["classifier_version"],
         "config_version": row["config_version"],
         "family_scores": json.loads(row["family_scores_json"]),
@@ -2948,6 +3441,16 @@ def summarize_job(job: dict[str, Any], *, duplicate: bool = False) -> dict[str, 
         "duplicate": duplicate,
         "job": job,
     }
+
+
+def _source_provenance(evidence: dict[str, Any]) -> str:
+    value = str(evidence.get("source_provenance") or evidence.get("provenance") or "").strip()
+    if value in {"manual", "extension", "demo", "imported", "test"}:
+        return value
+    source = str(evidence.get("source") or "").strip()
+    if source in {"manual", "extension", "demo", "imported", "test"}:
+        return source
+    return "manual"
 
 
 def ensure_no_unexpected_tables(repository: Repository, expected: Iterable[str]) -> None:

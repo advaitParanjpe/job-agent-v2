@@ -61,6 +61,35 @@ combined with the configured default weights:
 No test requires live credentials. Tests use deterministic fake semantic
 providers.
 
+The dashboard exposes semantic status explicitly instead of implying success
+from an empty evidence list:
+
+- `live_success`: live provider output was validated and used.
+- `disabled`: semantic mode is disabled.
+- `not_configured`: semantic mode is enabled but no key is configured.
+- `fallback_used`: deterministic fallback was used.
+- `request_failed`: the provider request failed safely.
+- `response_invalid`: provider output failed validation.
+- `timed_out`: the request timed out.
+- `not_attempted`: no request was attempted for this job.
+
+Persisted semantic diagnostics include enabled/attempted/fallback flags, model,
+provider, timestamps/latency where available, safe failure code/summary,
+semantic assessment summary, deterministic family decision, and the final
+selection rule. API responses and the dashboard must not expose API keys,
+authorization headers, stack traces, or private model reasoning.
+
+Verify semantic mode without writing to the jobs database:
+
+```bash
+./scripts/semantic-check --no-network
+./scripts/semantic-check
+```
+
+The live form sends one small synthetic UVM/Python verification request and may
+incur provider cost. It prints only success/failure, model, latency, selected
+family, and evidence count.
+
 ## Decision Policy
 
 The initial configurable thresholds are:
@@ -73,6 +102,11 @@ The initial configurable thresholds are:
 
 If a title signal conflicts with the selected family, a would-be clear match is
 downgraded to `hybrid_match` so the decision remains auditable.
+
+User-facing surfaces must not show `hybrid_match` alone. They should present it
+as a mixed role, for example "Mixed role: Verification + Software", followed by
+the selected CV family, secondary family, review requirement, and rule-based or
+semantic evidence that caused the result.
 
 ## Persistence
 

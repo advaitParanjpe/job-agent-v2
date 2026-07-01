@@ -34,6 +34,10 @@ Review items use these statuses:
 Resolution history is append-only. The original classifier and tailoring audit
 records are never overwritten.
 
+Manual re-score and restore-and-re-score create new analysis-run records rather
+than overwriting review history. Previous packet artifacts and reviewed packet
+versions remain linked to their original packet/review records.
+
 ## Allowed Actions
 
 Classification actions:
@@ -243,9 +247,9 @@ does not mutate classifier or tailoring configuration.
 
 ## Dashboard Review Workflow
 
-The local dashboard includes a Review queue section above the job table. It can
-list pending or resolved reviews, filter by status, review type, and family,
-and open a compact detail view for each item.
+The local dashboard uses top-level `Jobs`, `Reviews`, and `System` sections.
+The Reviews section lists pending or resolved reviews, filters by status,
+review type, and family, and opens a compact detail view for each item.
 
 The detail view separates:
 
@@ -274,6 +278,16 @@ On scored jobs, the job table includes `Review family selection`. This creates
 or opens a pending classification review through `POST /api/jobs/{job_id}/reviews`,
 including for clear-match decisions that do not normally enter the default
 review queue.
+
+On the current dashboard, the same action appears in the selected job detail as
+`Review family`. The Jobs view stays focused on job state and next action;
+review evidence, resolution history, and packet-changing controls remain under
+Reviews with detailed evidence collapsed by default.
+
+Individual job deletion is intentionally conservative. Demo/test jobs can be
+hard-deleted through `POST /api/jobs/{job_id}/delete`; manual, extension, and
+imported jobs are archived by the same endpoint so audit history remains
+consistent. The frontend labels this behavior in the confirmation dialog.
 
 ## Immutable Content Guarantees
 
